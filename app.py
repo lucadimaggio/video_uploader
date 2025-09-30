@@ -39,3 +39,10 @@ def upload_youtube(data: VideoData):
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+import os
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
