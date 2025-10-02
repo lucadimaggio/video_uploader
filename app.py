@@ -11,12 +11,13 @@ YOUTUBE_CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
 YOUTUBE_CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
 YOUTUBE_REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
 
-def make_response(status: str, platform: str, link: str = None, error: str = None):
+def make_response(status: str, platform: str, link: str = None, error: str = None, publishAt: str = None):
     return {
         "status": status,
         "platform": platform,
         "link": link,
-        "error": error
+        "error": error,
+        "publishAt": publishAt
     }
 
 
@@ -79,6 +80,7 @@ def upload_youtube(data: VideoData):
         )
 
         response = request.execute()
+        publish_at = response.get("status", {}).get("publishAt")
         video_id = response.get("id")
         video_link = f"https://www.youtube.com/watch?v={video_id}"
 
@@ -86,7 +88,7 @@ def upload_youtube(data: VideoData):
 
         # 3. Rimuovo il file temporaneo
         os.remove(filename)
-        return make_response("success", "youtube", link=video_link)
+        return make_response("success", "youtube", link=video_link, publishAt=publish_at)
 
 
 
