@@ -11,6 +11,15 @@ YOUTUBE_CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
 YOUTUBE_CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
 YOUTUBE_REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
 
+def make_response(status: str, platform: str, link: str = None, error: str = None):
+    return {
+        "status": status,
+        "platform": platform,
+        "link": link,
+        "error": error
+    }
+
+
 def get_youtube_service():
     creds = Credentials(
         None,
@@ -77,18 +86,14 @@ def upload_youtube(data: VideoData):
 
         # 3. Rimuovo il file temporaneo
         os.remove(filename)
-        return {
-            "status": "success",
-            "platform": "youtube",
-            "link": video_link
-        }
+        return make_response("success", "youtube", link=video_link)
 
 
 
     except HttpError as e:
-        return {"status": "error", "error": f"HTTP error: {e}"}
+        return make_response("error", "youtube", error=f"HTTP error: {e}")
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return make_response("error", "youtube", error=str(e))
 
 
 if __name__ == "__main__":
