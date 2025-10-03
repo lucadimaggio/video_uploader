@@ -21,6 +21,11 @@ YOUTUBE_CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
 YOUTUBE_CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
 YOUTUBE_REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
 
+META_ACCESS_TOKEN = os.environ["META_ACCESS_TOKEN"]
+FB_PAGE_ID = os.environ["FB_PAGE_ID"]
+IG_ACCOUNT_ID = os.environ["IG_ACCOUNT_ID"]
+
+
 def make_response(status: str, platform: str, link: str = None, error: str = None, publishAt: str = None):
     return {
         "status": status,
@@ -49,6 +54,112 @@ class VideoData(BaseModel):
     title: str
     description: str
     publishDate: str
+@app.post("/upload/facebook")
+def upload_facebook(data: VideoData):
+    try:
+        logger.info(f"Inizio upload Facebook: titolo='{data.title}', url='{data.fileUrl}'")
+
+        # Scarica file da Drive
+        r = requests.get(data.fileUrl, stream=True)
+        if r.status_code != 200:
+            logger.error(f"Errore download file Drive: status={r.status_code}")
+            return make_response("error", "facebook", error=f"Errore download: HTTP {r.status_code}")
+
+        filename = "temp_fb_video.mp4"
+        with open(filename, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        # Upload su Facebook
+        url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/videos"
+        files = {"file": open(filename, "rb")}
+        payload = {
+            "title": data.title,
+            "description": data.description,
+            "access_token": META_ACCESS_TOKEN
+        }
+
+        res = requests.post(url, data=payload, files=files)
+        os.remove(filename)
+
+        if res.status_code != 200:
+            logger.error(f"Errore API Facebook: {res.text}")
+            return make_response("error", "facebook", error=res.text)
+
+        video_id = res.json().get("id")
+
+        # Recupera il permalink reale
+        url_permalink = f"https://graph.facebook.com/v21.0/{video_id}"
+        params = {
+            "fields": "permalink_url",
+            "access_token": META_ACCESS_TOKEN
+        }
+        res_link = requests.get(url_permalink, params=params)
+        if res_link.status_code != 200:
+            logger.error(f"Errore recupero permalink FB: {res_link.text}")
+            return make_response("error", "facebook", error=res_link.text)
+
+        link = res_link.json().get("permalink_url")
+        logger.info(f"Video caricato su Facebook: id={video_id}, link={link}")
+
+        return make_response("success", "facebook", link=link, publishAt=data.publishDate)
+
+    except Exception as e:
+        logger.exception("Errore imprevisto durante upload Facebook")
+        return make_response("error", "facebook", error=str(e))
+
+
+@app.post("/upload/instagram")
+def upload_instagram(data: VideoData):
+    try:
+        logger.info(f"Inizio upload Instagram: titolo='{data.title}', url='{data.fileUrl}'")
+
+        # Step 1: creazione media
+        url_create = f"https://graph.facebook.com/v21.0/{IG_ACCOUNT_ID}/media"
+        payload = {
+            "video_url": data.fileUrl,
+            "caption": data.description,
+            "access_token": META_ACCESS_TOKEN
+        }
+        res_create = requests.post(url_create, data=payload)
+        if res_create.status_code != 200:
+            logger.error(f"Errore creazione media IG: {res_create.text}")
+            return make_response("error", "instagram", error=res_create.text)
+
+        creation_id = res_create.json().get("id")
+
+        # Step 2: pubblicazione
+        url_publish = f"https://graph.facebook.com/v21.0/{IG_ACCOUNT_ID}/media_publish"
+        payload_pub = {
+            "creation_id": creation_id,
+            "access_token": META_ACCESS_TOKEN
+        }
+        res_pub = requests.post(url_publish, data=payload_pub)
+        if res_pub.status_code != 200:
+            logger.error(f"Errore pubblicazione IG: {res_pub.text}")
+            return make_response("error", "instagram", error=res_pub.text)
+
+        post_id = res_pub.json().get("id")
+
+        # Recupera il permalink reale
+        url_permalink = f"https://graph.facebook.com/v21.0/{post_id}"
+        params = {
+            "fields": "permalink",
+            "access_token": META_ACCESS_TOKEN
+        }
+        res_link = requests.get(url_permalink, params=params)
+        if res_link.status_code != 200:
+            logger.error(f"Errore recupero permalink IG: {res_link.text}")
+            return make_response("error", "instagram", error=res_link.text)
+
+        link = res_link.json().get("permalink")
+        logger.info(f"Video pubblicato su Instagram: id={post_id}, link={link}")
+
+        return make_response("success", "instagram", link=link, publishAt=data.publishDate)
+
+    except Exception as e:
+        logger.exception("Errore imprevisto durante upload Instagram")
+        return make_response("error", "instagram", error=str(e))
 
 @app.post("/upload/youtube")
 def upload_youtube(data: VideoData):
