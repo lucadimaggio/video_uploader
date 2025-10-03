@@ -83,8 +83,12 @@ def upload_facebook(data: VideoData):
         os.remove(filename)
 
         if res.status_code != 200:
-            logger.error(f"Errore API Facebook: {res.text}")
-            return make_response("error", "facebook", error=res.text)
+            try:
+                error_msg = res.json().get("error", {}).get("message", res.text)
+            except Exception:
+                error_msg = res.text
+            logger.error(f"Errore API Facebook: {error_msg}")
+            return make_response("error", "facebook", error=error_msg)
 
         video_id = res.json().get("id")
 
@@ -102,7 +106,7 @@ def upload_facebook(data: VideoData):
         link = res_link.json().get("permalink_url")
         logger.info(f"Video caricato su Facebook: id={video_id}, link={link}")
 
-        return make_response("success", "facebook", link=link, publishAt=data.publishDate)
+        return make_response("success", "facebook", link=link, publishAt=data.publishDate or None)
 
     except Exception as e:
         logger.exception("Errore imprevisto durante upload Facebook")
@@ -123,8 +127,12 @@ def upload_instagram(data: VideoData):
         }
         res_create = requests.post(url_create, data=payload)
         if res_create.status_code != 200:
-            logger.error(f"Errore creazione media IG: {res_create.text}")
-            return make_response("error", "instagram", error=res_create.text)
+            try:
+                error_msg = res_create.json().get("error", {}).get("message", res_create.text)
+            except Exception:
+                error_msg = res_create.text
+            logger.error(f"Errore creazione media IG: {error_msg}")
+            return make_response("error", "instagram", error=error_msg)
 
         creation_id = res_create.json().get("id")
 
@@ -136,8 +144,12 @@ def upload_instagram(data: VideoData):
         }
         res_pub = requests.post(url_publish, data=payload_pub)
         if res_pub.status_code != 200:
-            logger.error(f"Errore pubblicazione IG: {res_pub.text}")
-            return make_response("error", "instagram", error=res_pub.text)
+            try:
+                error_msg = res_pub.json().get("error", {}).get("message", res_pub.text)
+            except Exception:
+                error_msg = res_pub.text
+            logger.error(f"Errore pubblicazione IG: {error_msg}")
+            return make_response("error", "instagram", error=error_msg)
 
         post_id = res_pub.json().get("id")
 
@@ -149,17 +161,23 @@ def upload_instagram(data: VideoData):
         }
         res_link = requests.get(url_permalink, params=params)
         if res_link.status_code != 200:
-            logger.error(f"Errore recupero permalink IG: {res_link.text}")
-            return make_response("error", "instagram", error=res_link.text)
+            try:
+                error_msg = res_link.json().get("error", {}).get("message", res_link.text)
+            except Exception:
+                error_msg = res_link.text
+            logger.error(f"Errore recupero permalink IG: {error_msg}")
+            return make_response("error", "instagram", error=error_msg)
 
         link = res_link.json().get("permalink")
         logger.info(f"Video pubblicato su Instagram: id={post_id}, link={link}")
 
-        return make_response("success", "instagram", link=link, publishAt=data.publishDate)
+        return make_response("success", "instagram", link=link, publishAt=data.publishDate or None)
 
     except Exception as e:
         logger.exception("Errore imprevisto durante upload Instagram")
         return make_response("error", "instagram", error=str(e))
+
+
 
 @app.post("/upload/youtube")
 def upload_youtube(data: VideoData):
