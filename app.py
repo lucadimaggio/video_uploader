@@ -151,6 +151,7 @@ def upload_instagram(data: VideoData):
 
         upload_session_id = res_start.json().get("id")
 
+
         # Step 2: upload file (single shot se piccolo, chunk se grande)
         url_upload = f"https://graph.facebook.com/v23.0/{upload_session_id}"
         headers = {
