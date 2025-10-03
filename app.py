@@ -7,6 +7,16 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
+import logging
+
+# Configura logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
 YOUTUBE_CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
 YOUTUBE_CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
 YOUTUBE_REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
@@ -44,10 +54,13 @@ class VideoData(BaseModel):
 def upload_youtube(data: VideoData):
     try:
         # 1. Scarica il file dal link Google Drive
+        logger.info(f"Inizio upload video: titolo='{data.title}', url='{data.fileUrl}'")
+
         r = requests.get(data.fileUrl, stream=True)
         if r.status_code != 200:
-            raise HTTPException(status_code=400, detail="Errore download file")
-        
+            logger.error(f"Errore nel download file da Drive: status={r.status_code}")
+            return make_response("error", "youtube", error=f"Errore download file: HTTP {r.status_code}")
+
         filename = "temp_video.mp4"
         with open(filename, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
@@ -84,7 +97,7 @@ def upload_youtube(data: VideoData):
         video_id = response.get("id")
         video_link = f"https://www.youtube.com/watch?v={video_id}"
 
-        print(f"Carico video {filename} con titolo {data.title}")
+        logger.info(f"Video caricato correttamente: id={video_id}, titolo='{data.title}'")
 
         # 3. Rimuovo il file temporaneo
         os.remove(filename)
@@ -93,9 +106,14 @@ def upload_youtube(data: VideoData):
 
 
     except HttpError as e:
-        return make_response("error", "youtube", error=f"HTTP error: {e}")
+        logger.error(f"Errore API YouTube: {e}")
+        return make_response("error", "youtube", error=f"Errore API YouTube: {str(e)}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Errore di rete durante il download: {e}")
+        return make_response("error", "youtube", error=f"Errore rete download: {str(e)}")
     except Exception as e:
-        return make_response("error", "youtube", error=str(e))
+        logger.exception("Errore imprevisto durante upload")
+        return make_response("error", "youtube", error=f"Errore generico: {str(e)}")
 
 
 if __name__ == "__main__":
