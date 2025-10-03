@@ -72,7 +72,7 @@ def upload_facebook(data: VideoData):
                 f.write(chunk)
 
         # Upload su Facebook
-        url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/videos"
+        url = f"https://graph.facebook.com/v23.0/{FB_PAGE_ID}/videos"
         files = {"file": open(filename, "rb")}
         payload = {
             "title": data.title,
@@ -94,7 +94,7 @@ def upload_facebook(data: VideoData):
         video_id = res.json().get("id")
 
         # Recupera il permalink reale
-        url_permalink = f"https://graph.facebook.com/v21.0/{video_id}"
+        url_permalink = f"https://graph.facebook.com/v23.0/{video_id}"
         params = {
             "fields": "permalink_url",
             "access_token": META_ACCESS_TOKEN
@@ -152,7 +152,7 @@ def upload_instagram(data: VideoData):
         upload_session_id = res_start.json().get("id")
 
         # Step 2: upload file (single shot se piccolo, chunk se grande)
-        url_upload = f"https://graph.facebook.com/v23.0/{upload_session_id}"
+        url_upload = f"https://graph.facebook.com/v23.0/upload:{upload_session_id}"
         headers = {
             "Authorization": f"OAuth {META_ACCESS_TOKEN}",
             "file_offset": "0"
