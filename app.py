@@ -121,6 +121,7 @@ def upload_instagram(data: VideoData):
         # Step 1: creazione media
         url_create = f"https://graph.facebook.com/v21.0/{IG_ACCOUNT_ID}/media"
         payload = {
+            "media_type": "VIDEO",
             "video_url": data.fileUrl,
             "caption": data.description,
             "access_token": META_ACCESS_TOKEN
