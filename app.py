@@ -150,6 +150,8 @@ def upload_instagram(data: VideoData):
             return make_response("error", "instagram", error=error_msg)
 
         upload_session_id = res_start.json().get("id")
+        if not upload_session_id.startswith("upload:"):
+            upload_session_id = f"upload:{upload_session_id}"
 
 
         # Step 2: upload file (single shot se piccolo, chunk se grande)
@@ -169,12 +171,18 @@ def upload_instagram(data: VideoData):
             return make_response("error", "instagram", error=error_msg)
 
         file_handle = res_upload.json().get("h")
+        if not file_handle:
+            os.remove(filename)
+            error_msg = res_upload.text
+            logger.error(f"Nessun file_handle ricevuto da IG: {error_msg}")
+            return make_response("error", "instagram", error=error_msg)
 
         # Step 3: crea media object con file handle
         url_media = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/media"
         payload_media = {
-            "video": file_handle,
+            "upload_id": file_handle,
             "caption": data.description,
+            "media_type": "VIDEO",
             "access_token": META_ACCESS_TOKEN
         }
         res_media = requests.post(url_media, data=payload_media)
