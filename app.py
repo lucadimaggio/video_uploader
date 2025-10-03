@@ -24,6 +24,7 @@ YOUTUBE_REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
 META_ACCESS_TOKEN = os.environ["META_ACCESS_TOKEN"]
 FB_PAGE_ID = os.environ["FB_PAGE_ID"]
 IG_ACCOUNT_ID = os.environ["IG_ACCOUNT_ID"]
+META_APP_ID = os.environ["META_APP_ID"]
 
 
 def make_response(status: str, platform: str, link: str = None, error: str = None, publishAt: str = None):
@@ -134,7 +135,7 @@ def upload_instagram(data: VideoData):
         file_type = "video/mp4"
 
         # Step 1: start upload session
-        url_start = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/uploads"
+        url_start = f"https://graph.facebook.com/v23.0/{META_APP_ID}/uploads"
         payload_start = {
             "file_name": file_name,
             "file_length": file_size,
