@@ -116,28 +116,82 @@ def upload_facebook(data: VideoData):
 @app.post("/upload/instagram")
 def upload_instagram(data: VideoData):
     try:
-        logger.info(f"Inizio upload Instagram: titolo='{data.title}', url='{data.fileUrl}'")
+        logger.info(f"Inizio upload Instagram (chunked): titolo='{data.title}', url='{data.fileUrl}'")
 
-        # Step 1: creazione media
-        url_create = f"https://graph.facebook.com/v21.0/{IG_ACCOUNT_ID}/media"
-        payload = {
+        # Scarica il file in locale
+        r = requests.get(data.fileUrl, stream=True)
+        if r.status_code != 200:
+            logger.error(f"Errore download file: status={r.status_code}")
+            return make_response("error", "instagram", error=f"Errore download: HTTP {r.status_code}")
+
+        filename = "temp_ig_video.mp4"
+        with open(filename, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        file_size = os.path.getsize(filename)
+
+        # Step 1: avvia la sessione di upload
+        url_start = f"https://graph.facebook.com/v21.0/{IG_ACCOUNT_ID}/media"
+        payload_start = {
+            "upload_phase": "start",
+            "file_size": file_size,
             "media_type": "VIDEO",
-            "video_url": data.fileUrl,
+            "access_token": META_ACCESS_TOKEN
+        }
+        res_start = requests.post(url_start, data=payload_start)
+        if res_start.status_code != 200:
+            os.remove(filename)
+            error_msg = res_start.json().get("error", {}).get("message", res_start.text)
+            logger.error(f"Errore start upload IG: {error_msg}")
+            return make_response("error", "instagram", error=error_msg)
+
+        resp_json = res_start.json()
+        upload_session_id = resp_json["upload_session_id"]
+        start_offset = resp_json["start_offset"]
+        end_offset = resp_json["end_offset"]
+
+        # Step 2: invia i chunk
+        with open(filename, "rb") as f:
+            while start_offset < end_offset:
+                f.seek(start_offset)
+                chunk_data = f.read(end_offset - start_offset)
+
+                files = {"video_file_chunk": chunk_data}
+                payload_chunk = {
+                    "upload_phase": "transfer",
+                    "upload_session_id": upload_session_id,
+                    "start_offset": start_offset,
+                    "access_token": META_ACCESS_TOKEN
+                }
+                res_chunk = requests.post(url_start, data=payload_chunk, files=files)
+                if res_chunk.status_code != 200:
+                    os.remove(filename)
+                    error_msg = res_chunk.json().get("error", {}).get("message", res_chunk.text)
+                    logger.error(f"Errore upload chunk IG: {error_msg}")
+                    return make_response("error", "instagram", error=error_msg)
+
+                resp_json = res_chunk.json()
+                start_offset = resp_json["start_offset"]
+                end_offset = resp_json["end_offset"]
+
+        # Step 3: finalizza upload
+        payload_finish = {
+            "upload_phase": "finish",
+            "upload_session_id": upload_session_id,
             "caption": data.description,
             "access_token": META_ACCESS_TOKEN
         }
-        res_create = requests.post(url_create, data=payload)
-        if res_create.status_code != 200:
-            try:
-                error_msg = res_create.json().get("error", {}).get("message", res_create.text)
-            except Exception:
-                error_msg = res_create.text
-            logger.error(f"Errore creazione media IG: {error_msg}")
+        res_finish = requests.post(url_start, data=payload_finish)
+        if res_finish.status_code != 200:
+            os.remove(filename)
+            error_msg = res_finish.json().get("error", {}).get("message", res_finish.text)
+            logger.error(f"Errore finish IG: {error_msg}")
             return make_response("error", "instagram", error=error_msg)
 
-        creation_id = res_create.json().get("id")
+        creation_id = res_finish.json().get("id")
 
-        # Step 2: pubblicazione
+        # Step 4: pubblica il video
         url_publish = f"https://graph.facebook.com/v21.0/{IG_ACCOUNT_ID}/media_publish"
         payload_pub = {
             "creation_id": creation_id,
@@ -145,27 +199,24 @@ def upload_instagram(data: VideoData):
         }
         res_pub = requests.post(url_publish, data=payload_pub)
         if res_pub.status_code != 200:
-            try:
-                error_msg = res_pub.json().get("error", {}).get("message", res_pub.text)
-            except Exception:
-                error_msg = res_pub.text
+            os.remove(filename)
+            error_msg = res_pub.json().get("error", {}).get("message", res_pub.text)
             logger.error(f"Errore pubblicazione IG: {error_msg}")
             return make_response("error", "instagram", error=error_msg)
 
         post_id = res_pub.json().get("id")
 
-        # Recupera il permalink reale
+        # Step 5: recupera il permalink
         url_permalink = f"https://graph.facebook.com/v21.0/{post_id}"
         params = {
             "fields": "permalink",
             "access_token": META_ACCESS_TOKEN
         }
         res_link = requests.get(url_permalink, params=params)
+        os.remove(filename)
+
         if res_link.status_code != 200:
-            try:
-                error_msg = res_link.json().get("error", {}).get("message", res_link.text)
-            except Exception:
-                error_msg = res_link.text
+            error_msg = res_link.json().get("error", {}).get("message", res_link.text)
             logger.error(f"Errore recupero permalink IG: {error_msg}")
             return make_response("error", "instagram", error=error_msg)
 
@@ -177,7 +228,6 @@ def upload_instagram(data: VideoData):
     except Exception as e:
         logger.exception("Errore imprevisto durante upload Instagram")
         return make_response("error", "instagram", error=str(e))
-
 
 
 @app.post("/upload/youtube")
