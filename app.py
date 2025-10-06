@@ -50,6 +50,13 @@ def get_youtube_service():
 
 app = FastAPI()
 
+# Monta una cartella pubblica per i video temporanei
+from fastapi.staticfiles import StaticFiles
+os.makedirs("videos", exist_ok=True)
+app.mount("/videos", StaticFiles(directory="videos"), name="videos")
+logger.info("Cartella pubblica '/videos' pronta per servire file temporanei.")
+
+
 class VideoData(BaseModel):
     fileUrl: str
     title: str
@@ -117,91 +124,49 @@ def upload_facebook(data: VideoData):
 @app.post("/upload/instagram")
 def upload_instagram(data: VideoData):
     try:
-        logger.info(f"Inizio upload Instagram (Resumable): titolo='{data.title}', url='{data.fileUrl}'")
+        logger.info(f"Inizio upload Instagram (REELS): titolo='{data.title}', url='{data.fileUrl}'")
 
-        # Scarica il file in locale
+        # Scarica il file da Drive e salvalo nella cartella pubblica
+        os.makedirs("videos", exist_ok=True)
+        local_path = f"videos/{data.title}.mp4"
         r = requests.get(data.fileUrl, stream=True)
         if r.status_code != 200:
             logger.error(f"Errore download file: status={r.status_code}")
             return make_response("error", "instagram", error=f"Errore download: HTTP {r.status_code}")
 
-        filename = "temp_ig_video.mp4"
-        with open(filename, "wb") as f:
+        with open(local_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
 
-        file_size = os.path.getsize(filename)
-        file_name = os.path.basename(filename)
-        file_type = "video/mp4"
+        # Costruisci link pubblico temporaneo
+        server_url = os.environ.get("RAILWAY_STATIC_URL", "https://tuo-progetto.up.railway.app")
+        video_url = f"{server_url}/videos/{os.path.basename(local_path)}"
+        logger.info(f"Link temporaneo disponibile: {video_url}")
 
-        # Step 1: start upload session
-        url_start = f"https://graph.facebook.com/v23.0/{META_APP_ID}/uploads"
-        payload_start = {
-            "file_name": file_name,
-            "file_length": file_size,
-            "file_type": file_type,
-            "access_token": META_ACCESS_TOKEN
-        }
-        res_start = requests.post(url_start, data=payload_start)
-        if res_start.status_code != 200:
-            os.remove(filename)
-            error_msg = res_start.json().get("error", {}).get("message", res_start.text)
-            logger.error(f"Errore start upload IG: {error_msg}")
-            return make_response("error", "instagram", error=error_msg)
-
-        upload_session_id = res_start.json().get("id")
-        if not upload_session_id.startswith("upload:"):
-            upload_session_id = f"upload:{upload_session_id}"
-
-
-        # Step 2: upload file (single shot se piccolo, chunk se grande)
-        url_upload = f"https://graph.facebook.com/v23.0/{upload_session_id}"
-        headers = {
-            "Authorization": f"OAuth {META_ACCESS_TOKEN}",
-            "file_offset": "0"
-        }
-        with open(filename, "rb") as f:
-            file_data = f.read()
-
-        res_upload = requests.post(url_upload, headers=headers, data=file_data)
-        if res_upload.status_code != 200:
-            os.remove(filename)
-            error_msg = res_upload.json().get("error", {}).get("message", res_upload.text)
-            logger.error(f"Errore upload IG: {error_msg}")
-            return make_response("error", "instagram", error=error_msg)
-
-        file_handle = res_upload.json().get("h")
-        if not file_handle:
-            os.remove(filename)
-            error_msg = res_upload.text
-            logger.error(f"Nessun file_handle ricevuto da IG: {error_msg}")
-            return make_response("error", "instagram", error=error_msg)
-
-        # Step 3: crea media object con file handle
+        # Crea media object su Instagram come REEL
         url_media = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/media"
         payload_media = {
-            "upload_id": file_handle,
+            "video_url": video_url,
             "caption": data.description,
-            "media_type": "VIDEO",
+            "media_type": "REELS",
             "access_token": META_ACCESS_TOKEN
         }
         res_media = requests.post(url_media, data=payload_media)
         if res_media.status_code != 200:
-            os.remove(filename)
             error_msg = res_media.json().get("error", {}).get("message", res_media.text)
             logger.error(f"Errore creazione media IG: {error_msg}")
             return make_response("error", "instagram", error=error_msg)
 
         creation_id = res_media.json().get("id")
+        logger.info(f"Media object creato correttamente: creation_id={creation_id}")
 
-        # Step 4: pubblica il video
+        # Pubblica il Reel
         url_publish = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/media_publish"
         payload_pub = {
             "creation_id": creation_id,
             "access_token": META_ACCESS_TOKEN
         }
         res_pub = requests.post(url_publish, data=payload_pub)
-        os.remove(filename)
 
         if res_pub.status_code != 200:
             error_msg = res_pub.json().get("error", {}).get("message", res_pub.text)
@@ -210,12 +175,9 @@ def upload_instagram(data: VideoData):
 
         post_id = res_pub.json().get("id")
 
-        # Step 5: recupera permalink
+        # Recupera il permalink
         url_permalink = f"https://graph.facebook.com/v23.0/{post_id}"
-        params = {
-            "fields": "permalink",
-            "access_token": META_ACCESS_TOKEN
-        }
+        params = {"fields": "permalink", "access_token": META_ACCESS_TOKEN}
         res_link = requests.get(url_permalink, params=params)
         if res_link.status_code != 200:
             error_msg = res_link.json().get("error", {}).get("message", res_link.text)
@@ -223,14 +185,20 @@ def upload_instagram(data: VideoData):
             return make_response("error", "instagram", error=error_msg)
 
         link = res_link.json().get("permalink")
-        logger.info(f"Video pubblicato su Instagram: id={post_id}, link={link}")
+        logger.info(f"Reel pubblicato con successo: {link}")
+
+        # Rimozione del file dopo la pubblicazione
+        try:
+            os.remove(local_path)
+            logger.info("File temporaneo rimosso.")
+        except Exception as e:
+            logger.warning(f"Impossibile rimuovere file temporaneo: {e}")
 
         return make_response("success", "instagram", link=link, publishAt=data.publishDate or None)
 
     except Exception as e:
         logger.exception("Errore imprevisto durante upload Instagram")
         return make_response("error", "instagram", error=str(e))
-
 
 
 
