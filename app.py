@@ -143,6 +143,34 @@ def upload_instagram(data: VideoData):
         video_url = f"https://{server_url.replace('https://', '').replace('http://', '')}/videos/{os.path.basename(local_path).replace('.mp4.mp4', '.mp4')}"
         logger.info(f"Link temporaneo disponibile: {video_url}")
 
+        # ✅ Carica il file su Cloudflare R2 per ottenere un link pubblico stabile
+        import boto3
+
+        r2_client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+            region_name="auto"
+        )
+
+        bucket_name = os.environ["R2_BUCKET_NAME"]
+        object_key = os.path.basename(local_path)
+        logger.info(f"Caricamento video su Cloudflare R2: {object_key}")
+
+        with open(local_path, "rb") as f:
+            r2_client.upload_fileobj(
+                f,
+                bucket_name,
+                object_key,
+                ExtraArgs={"ACL": "public-read", "ContentType": "video/mp4"}
+            )
+
+        # Costruisci link pubblico diretto (usando R2_PUBLIC_URL impostato su Railway)
+        base_url = os.environ.get("R2_PUBLIC_URL", f"https://pub-{os.environ['R2_ACCOUNT_ID']}.r2.dev")
+        video_url = f"{base_url.rstrip('/')}/{object_key}"
+        logger.info(f"Link pubblico R2 pronto: {video_url}")
+
         # Crea media object su Instagram come REEL
         url_media = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/media"
         payload_media = {
@@ -208,6 +236,14 @@ def upload_instagram(data: VideoData):
 
         link = res_link.json().get("permalink")
         logger.info(f"Reel pubblicato con successo: {link}")
+
+        # 🔄 Elimina il file dal bucket R2 dopo la pubblicazione
+        try:
+            r2_client.delete_object(Bucket=bucket_name, Key=object_key)
+            logger.info(f"File {object_key} eliminato da Cloudflare R2.")
+        except Exception as e:
+            logger.warning(f"Impossibile eliminare file da R2: {e}")
+
 
         # Rimozione del file dopo la pubblicazione
         try:
