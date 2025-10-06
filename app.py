@@ -21,7 +21,8 @@ YOUTUBE_CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
 YOUTUBE_CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
 YOUTUBE_REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
 
-META_ACCESS_TOKEN = os.environ["META_ACCESS_TOKEN"]
+META_IG_TOKEN = os.environ["META_IG_TOKEN"]
+META_FB_TOKEN = os.environ["META_FB_TOKEN"]
 FB_PAGE_ID = os.environ["FB_PAGE_ID"]
 IG_ACCOUNT_ID = os.environ["IG_ACCOUNT_ID"]
 META_APP_ID = os.environ["META_APP_ID"]
@@ -84,7 +85,7 @@ def upload_facebook(data: VideoData):
         payload = {
             "title": data.title,
             "description": data.description,
-            "access_token": META_ACCESS_TOKEN
+            "access_token": META_FB_TOKEN
         }
 
         res = requests.post(url, data=payload, files=files)
@@ -104,7 +105,7 @@ def upload_facebook(data: VideoData):
         url_permalink = f"https://graph.facebook.com/v23.0/{video_id}"
         params = {
             "fields": "permalink_url",
-            "access_token": META_ACCESS_TOKEN
+            "access_token": META_FB_TOKEN
         }
         res_link = requests.get(url_permalink, params=params)
         if res_link.status_code != 200:
@@ -177,7 +178,7 @@ def upload_instagram(data: VideoData):
             "video_url": video_url,
             "caption": data.description,
             "media_type": "REELS",
-            "access_token": META_ACCESS_TOKEN
+            "access_token": META_IG_TOKEN
         }
         res_media = requests.post(url_media, data=payload_media)
         if res_media.status_code != 200:
@@ -190,7 +191,7 @@ def upload_instagram(data: VideoData):
 
         # Attendi che Instagram completi l'elaborazione del video
         import time
-        status_url = f"https://graph.facebook.com/v23.0/{creation_id}?fields=status_code&access_token={META_ACCESS_TOKEN}"
+        status_url = f"https://graph.facebook.com/v23.0/{creation_id}?fields=status_code&access_token={META_IG_TOKEN}"
 
         for i in range(30):  # controllo ogni 2 secondi per massimo ~60 secondi
             res_status = requests.get(status_url)
@@ -214,7 +215,7 @@ def upload_instagram(data: VideoData):
         url_publish = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/media_publish"
         payload_pub = {
             "creation_id": creation_id,
-            "access_token": META_ACCESS_TOKEN
+            "access_token": META_IG_TOKEN
         }
         res_pub = requests.post(url_publish, data=payload_pub)
 
@@ -227,7 +228,7 @@ def upload_instagram(data: VideoData):
 
         # Recupera il permalink
         url_permalink = f"https://graph.facebook.com/v23.0/{post_id}"
-        params = {"fields": "permalink", "access_token": META_ACCESS_TOKEN}
+        params = {"fields": "permalink", "access_token": META_IG_TOKEN}
         res_link = requests.get(url_permalink, params=params)
         if res_link.status_code != 200:
             error_msg = res_link.json().get("error", {}).get("message", res_link.text)
