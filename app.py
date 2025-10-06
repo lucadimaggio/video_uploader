@@ -140,7 +140,7 @@ def upload_instagram(data: VideoData):
 
         # Costruisci link pubblico temporaneo
         server_url = os.environ.get("RAILWAY_STATIC_URL", "https://tuo-progetto.up.railway.app")
-        video_url = f"{server_url}/videos/{os.path.basename(local_path)}"
+        video_url = f"https://{server_url.replace('https://', '').replace('http://', '')}/videos/{os.path.basename(local_path).replace('.mp4.mp4', '.mp4')}"
         logger.info(f"Link temporaneo disponibile: {video_url}")
 
         # Crea media object su Instagram come REEL
@@ -159,6 +159,28 @@ def upload_instagram(data: VideoData):
 
         creation_id = res_media.json().get("id")
         logger.info(f"Media object creato correttamente: creation_id={creation_id}")
+
+        # Attendi che Instagram completi l'elaborazione del video
+        import time
+        status_url = f"https://graph.facebook.com/v23.0/{creation_id}?fields=status_code&access_token={META_ACCESS_TOKEN}"
+
+        for i in range(30):  # controllo ogni 2 secondi per massimo ~60 secondi
+            res_status = requests.get(status_url)
+            if res_status.status_code == 200:
+                status = res_status.json().get("status_code")
+                logger.info(f"Stato corrente del video: {status}")
+                if status == "FINISHED":
+                    logger.info("Elaborazione video completata, procedo alla pubblicazione.")
+                    break
+                elif status == "ERROR":
+                    logger.error("Errore durante l'elaborazione video Instagram.")
+                    return make_response("error", "instagram", error="Elaborazione video fallita su Instagram.")
+            time.sleep(2)
+        else:
+            logger.error("Timeout: video non elaborato entro 60 secondi.")
+            return make_response("error", "instagram", error="Timeout elaborazione video Instagram.")
+
+
 
         # Pubblica il Reel
         url_publish = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/media_publish"
