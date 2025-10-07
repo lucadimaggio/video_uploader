@@ -371,46 +371,126 @@ def upload_tiktok(data: VideoData):
 @app.get("/refresh/meta-token")
 def refresh_meta_token():
     """
-    Endpoint per rigenerare automaticamente i token long-lived di Meta (Facebook + Instagram).
-    Può essere chiamato da n8n o manualmente tramite browser.
+    ✅ Rigenera automaticamente:
+    - Page Token Facebook (da user token)
+    - Access Token Instagram (dalla pagina collegata)
+    Aggiorna anche il file .env su Railway.
     """
     try:
-        logger.info("Inizio refresh token Meta...")
+        logger.info("🔄 Inizio refresh token Meta...")
 
         META_APP_ID = os.environ["META_APP_ID"]
         META_APP_SECRET = os.environ["META_APP_SECRET"]
         META_FB_TOKEN = os.environ["META_FB_TOKEN"]
+        FB_PAGE_ID = os.environ["FB_PAGE_ID"]
+        IG_ACCOUNT_ID = os.environ.get("IG_ACCOUNT_ID")
 
-        # Richiesta al Graph API per generare un nuovo token long-lived
+        # STEP 1️⃣ — Scambia user token per long-lived token
+        logger.info("🔁 Richiesta long-lived USER token...")
         refresh_url = (
             f"https://graph.facebook.com/v23.0/oauth/access_token?"
             f"grant_type=fb_exchange_token&client_id={META_APP_ID}&"
             f"client_secret={META_APP_SECRET}&fb_exchange_token={META_FB_TOKEN}"
         )
-
         res = requests.get(refresh_url)
         if res.status_code != 200:
-            logger.error(f"Errore durante il refresh token Meta: {res.text}")
+            logger.error(f"❌ Errore refresh user token: {res.text}")
             return make_response("error", "meta", error=res.text)
 
-        data = res.json()
-        new_token = data.get("access_token")
-        expires_in = data.get("expires_in", 0)
+        user_token = res.json().get("access_token")
+        logger.info("✅ Long-lived user token ottenuto.")
 
-        logger.info(f"Nuovo token Meta ottenuto. Scade tra {expires_in/86400:.1f} giorni.")
+        # STEP 2️⃣ — Ottieni il PAGE TOKEN corretto
+        logger.info("📄 Richiesta PAGE token dalla lista pagine...")
+        pages_res = requests.get(
+            f"https://graph.facebook.com/v23.0/me/accounts?access_token={user_token}"
+        )
+        pages_data = pages_res.json()
+        page_token = None
+        for page in pages_data.get("data", []):
+            if page.get("id") == FB_PAGE_ID:
+                page_token = page.get("access_token")
+                break
 
-        # Facoltativo: stampa in console il token (solo per debugging)
-        logger.info(f"Nuovo META_FB_TOKEN: {new_token}")
+        if not page_token:
+            logger.error("❌ Page token non trovato. Controlla FB_PAGE_ID o permessi.")
+            return make_response("error", "meta", error="Page token non trovato.")
 
-        # Restituisce il nuovo token come risposta
-        return make_response("success", "meta", link=None, error=None, publishAt=None) | {
-            "new_token": new_token,
-            "expires_in": expires_in
+        logger.info("✅ Page token ottenuto correttamente.")
+
+        # STEP 3️⃣ — Ottieni l’account Instagram collegato
+        logger.info("📸 Recupero account IG collegato alla pagina...")
+        ig_url = f"https://graph.facebook.com/v23.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={page_token}"
+        res_ig = requests.get(ig_url)
+        if res_ig.status_code != 200:
+            logger.warning(f"⚠️ Errore ottenendo IG account: {res_ig.text}")
+        else:
+            ig_account_id = res_ig.json().get("instagram_business_account", {}).get("id")
+            if ig_account_id:
+                IG_ACCOUNT_ID = ig_account_id
+                logger.info(f"✅ Instagram Account ID collegato: {IG_ACCOUNT_ID}")
+            else:
+                logger.warning("⚠️ Nessun account IG collegato trovato, uso quello esistente.")
+
+        # STEP 4️⃣ — Valida e usa lo stesso PAGE TOKEN come IG ACCESS TOKEN
+        logger.info("🔍 Validazione IG token...")
+        ig_test_url = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}?fields=username&access_token={page_token}"
+        ig_test_res = requests.get(ig_test_url)
+
+        if ig_test_res.status_code == 200:
+            ig_token = page_token
+            logger.info("✅ IG token valido e aggiornato.")
+        else:
+            ig_token = os.environ.get("META_IG_TOKEN")
+            logger.warning(f"⚠️ IG token non validato, mantengo quello esistente: {ig_test_res.text}")
+
+        # STEP 5️⃣ — Aggiorna variabili d’ambiente e file .env
+        os.environ["META_FB_TOKEN"] = page_token
+        os.environ["META_IG_TOKEN"] = ig_token
+        os.environ["IG_ACCOUNT_ID"] = IG_ACCOUNT_ID or ""
+
+        env_path = ".env"
+        def update_or_add(lines, key, value):
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith(f"{key}="):
+                    lines[i] = f"{key}={value}\n"
+                    found = True
+            if not found:
+                lines.append(f"{key}={value}\n")
+            return lines
+
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        for key, value in {
+            "META_FB_TOKEN": page_token,
+            "META_IG_TOKEN": ig_token,
+            "IG_ACCOUNT_ID": IG_ACCOUNT_ID or "",
+        }.items():
+            lines = update_or_add(lines, key, value)
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+        logger.info("💾 File .env aggiornato con nuovi token Meta e IG.")
+
+        # ✅ Risposta finale
+        return {
+            "status": "success",
+            "user_token": user_token,
+            "page_token": page_token,
+            "ig_token": ig_token,
+            "ig_account_id": IG_ACCOUNT_ID,
         }
 
     except Exception as e:
-        logger.exception("Errore durante il refresh del token Meta.")
+        logger.exception("❌ Errore durante il refresh del token Meta.")
         return make_response("error", "meta", error=str(e))
+
+
 
 @app.post("/update-token")
 def update_meta_token(request: dict):
