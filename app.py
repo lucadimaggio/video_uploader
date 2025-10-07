@@ -60,9 +60,9 @@ logger.info("Cartella pubblica '/videos' pronta per servire file temporanei.")
 
 class VideoData(BaseModel):
     fileUrl: str
-    title: str
-    description: str
-    publishDate: str
+    title: str | None = None
+    description: str | None = None
+    publishDate: str | None = None
 
 @app.get("/auth/tiktok/callback")
 def tiktok_callback(code: str = None, state: str = None):
@@ -278,6 +278,11 @@ def upload_instagram(data: VideoData):
 @app.post("/upload/youtube")
 def upload_youtube(data: VideoData):
     try:
+                # Controllo titolo
+        if not data.title or data.title.strip() == "":
+            logger.warning("Titolo non fornito. Imposto titolo di default.")
+            data.title = "Video automatico"
+
         # 1. Scarica il file dal link Google Drive
         logger.info(f"Inizio upload video: titolo='{data.title}', url='{data.fileUrl}'")
 
@@ -296,8 +301,8 @@ def upload_youtube(data: VideoData):
 
         body = {
             "snippet": {
-                "title": data.title,
-                "description": data.description,
+                "title": data.title or "Video automatico",
+                "description": data.description or "",
                 "categoryId": "22"  # categoria generica "People & Blogs"
             },
             "status": {
