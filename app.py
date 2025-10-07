@@ -301,7 +301,7 @@ def upload_youtube(data: VideoData):
 
         body = {
             "snippet": {
-                "title": data.title or "Video automatico",
+                "title": data.description or "Video automatico",
                 "description": data.description or "",
                 "categoryId": "22"  # categoria generica "People & Blogs"
             },
