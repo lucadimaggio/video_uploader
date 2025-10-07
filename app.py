@@ -402,15 +402,35 @@ def refresh_meta_token():
 
         # STEP 2️⃣ — Ottieni il PAGE TOKEN corretto
         logger.info("📄 Richiesta PAGE token dalla lista pagine...")
-        pages_res = requests.get(
-            f"https://graph.facebook.com/v23.0/me/accounts?access_token={user_token}"
-        )
-        pages_data = pages_res.json()
+        # STEP 2️⃣ — Ottieni il PAGE TOKEN corretto o usa quello esistente se già valido
+        logger.info("📄 Tentativo di ottenere PAGE token...")
+
         page_token = None
-        for page in pages_data.get("data", []):
-            if page.get("id") == FB_PAGE_ID:
-                page_token = page.get("access_token")
-                break
+        try:
+            pages_res = requests.get(
+                f"https://graph.facebook.com/v23.0/me/accounts?access_token={user_token}"
+            )
+            pages_data = pages_res.json()
+            for page in pages_data.get("data", []):
+                if page.get("id") == FB_PAGE_ID:
+                    page_token = page.get("access_token")
+                    logger.info("✅ Page token ottenuto da /me/accounts.")
+                    break
+        except Exception as e:
+            logger.warning(f"⚠️ Errore durante richiesta /me/accounts: {e}")
+
+        # Se non trovato, verifica se META_FB_TOKEN è già un Page Token valido
+        if not page_token:
+            logger.info("🔍 Nessun page token trovato, provo a validare il token esistente...")
+            test_res = requests.get(
+                f"https://graph.facebook.com/v23.0/me?fields=id,name&access_token={META_FB_TOKEN}"
+            )
+            if test_res.status_code == 200:
+                logger.info("✅ Token esistente è un Page Token valido. Lo utilizzo.")
+                page_token = META_FB_TOKEN
+            else:
+                logger.error("❌ Page token non trovato né valido.")
+                return make_response("error", "meta", error="Page token non trovato o non valido.")
 
         if not page_token:
             logger.error("❌ Page token non trovato. Controlla FB_PAGE_ID o permessi.")
