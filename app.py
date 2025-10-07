@@ -365,9 +365,58 @@ def upload_tiktok(data: VideoData):
         logger.exception("Errore durante upload TikTok")
         return make_response("error", "tiktok", error=str(e))
 
+        return make_response("error", "tiktok", error=str(e))
+
+
+@app.get("/refresh/meta-token")
+def refresh_meta_token():
+    """
+    Endpoint per rigenerare automaticamente i token long-lived di Meta (Facebook + Instagram).
+    Può essere chiamato da n8n o manualmente tramite browser.
+    """
+    try:
+        logger.info("Inizio refresh token Meta...")
+
+        META_APP_ID = os.environ["META_APP_ID"]
+        META_APP_SECRET = os.environ["META_APP_SECRET"]
+        META_FB_TOKEN = os.environ["META_FB_TOKEN"]
+
+        # Richiesta al Graph API per generare un nuovo token long-lived
+        refresh_url = (
+            f"https://graph.facebook.com/v23.0/oauth/access_token?"
+            f"grant_type=fb_exchange_token&client_id={META_APP_ID}&"
+            f"client_secret={META_APP_SECRET}&fb_exchange_token={META_FB_TOKEN}"
+        )
+
+        res = requests.get(refresh_url)
+        if res.status_code != 200:
+            logger.error(f"Errore durante il refresh token Meta: {res.text}")
+            return make_response("error", "meta", error=res.text)
+
+        data = res.json()
+        new_token = data.get("access_token")
+        expires_in = data.get("expires_in", 0)
+
+        logger.info(f"Nuovo token Meta ottenuto. Scade tra {expires_in/86400:.1f} giorni.")
+
+        # Facoltativo: stampa in console il token (solo per debugging)
+        logger.info(f"Nuovo META_FB_TOKEN: {new_token}")
+
+        # Restituisce il nuovo token come risposta
+        return make_response("success", "meta", link=None, error=None, publishAt=None) | {
+            "new_token": new_token,
+            "expires_in": expires_in
+        }
+
+    except Exception as e:
+        logger.exception("Errore durante il refresh del token Meta.")
+        return make_response("error", "meta", error=str(e))
+
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
+
+
