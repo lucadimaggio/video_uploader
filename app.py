@@ -412,6 +412,72 @@ def refresh_meta_token():
         logger.exception("Errore durante il refresh del token Meta.")
         return make_response("error", "meta", error=str(e))
 
+@app.post("/update-token")
+def update_meta_token(request: dict):
+    """
+    Endpoint per aggiornare i token Meta (Facebook e Instagram) inviati da n8n.
+    Aggiorna sia le variabili d’ambiente attive che il file .env su Railway.
+    Protetto da una chiave API interna (INTERNAL_API_KEY).
+    """
+    try:
+        logger.info("Richiesta di aggiornamento token Meta ricevuta.")
+
+        # ✅ Controllo chiave API
+        internal_key = os.environ.get("INTERNAL_API_KEY")
+        provided_key = request.get("api_key")
+
+        if not internal_key or provided_key != internal_key:
+            logger.warning("Tentativo di accesso non autorizzato all'endpoint /update-token")
+            return make_response("error", "meta", error="Accesso non autorizzato")
+
+        # ✅ Recupera nuovi token
+        new_fb_token = request.get("META_FB_TOKEN")
+        new_ig_token = request.get("META_IG_TOKEN")
+
+        if not new_fb_token and not new_ig_token:
+            logger.warning("Nessun token fornito nella richiesta.")
+            return make_response("error", "meta", error="Token mancanti nel body")
+
+        # ✅ Aggiorna variabili d’ambiente attive
+        if new_fb_token:
+            os.environ["META_FB_TOKEN"] = new_fb_token
+            logger.info("Variabile META_FB_TOKEN aggiornata in memoria.")
+        if new_ig_token:
+            os.environ["META_IG_TOKEN"] = new_ig_token
+            logger.info("Variabile META_IG_TOKEN aggiornata in memoria.")
+
+        # ✅ Aggiorna file .env (persistenza su Railway)
+        env_path = ".env"
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        def update_or_add(lines, key, value):
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith(f"{key}="):
+                    lines[i] = f"{key}={value}\n"
+                    found = True
+            if not found:
+                lines.append(f"{key}={value}\n")
+            return lines
+
+        if new_fb_token:
+            lines = update_or_add(lines, "META_FB_TOKEN", new_fb_token)
+        if new_ig_token:
+            lines = update_or_add(lines, "META_IG_TOKEN", new_ig_token)
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+        logger.info("File .env aggiornato con successo.")
+
+        return make_response("success", "meta", link=None, error=None, publishAt=None)
+
+    except Exception as e:
+        logger.exception("Errore durante l'aggiornamento dei token Meta.")
+        return make_response("error", "meta", error=str(e))
 
 
 if __name__ == "__main__":
