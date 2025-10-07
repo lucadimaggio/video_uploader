@@ -63,6 +63,20 @@ class VideoData(BaseModel):
     title: str
     description: str
     publishDate: str
+
+@app.get("/auth/tiktok/callback")
+def tiktok_callback(code: str = None, state: str = None):
+    """
+    Endpoint di callback per TikTok OAuth.
+    Riceve il 'code' dopo l'autenticazione e restituisce una conferma.
+    """
+    if not code:
+        logger.warning("Richiesta di callback TikTok senza 'code'")
+        return {"error": "missing_code"}
+    logger.info(f"Ricevuto TikTok OAuth code: {code}")
+    return {"status": "ok", "code": code}
+
+
 @app.post("/upload/facebook")
 def upload_facebook(data: VideoData):
     try:
@@ -325,6 +339,27 @@ def upload_youtube(data: VideoData):
     except Exception as e:
         logger.exception("Errore imprevisto durante upload")
         return make_response("error", "youtube", error=f"Errore generico: {str(e)}")
+
+@app.post("/upload/tiktok")
+def upload_tiktok(data: VideoData):
+    """
+    Endpoint per l'upload su TikTok (sandbox o produzione).
+    Attualmente restituisce una risposta simulata per testare la pipeline.
+    """
+    try:
+        logger.info(f"Inizio upload TikTok: titolo='{data.title}', url='{data.fileUrl}'")
+
+        # Qui in futuro: scambio code -> access_token e chiamata alle API TikTok
+        # Al momento simuliamo la risposta di successo
+        fake_link = "https://www.tiktok.com/@me/video/1234567890"
+        logger.info(f"Simulazione completata. TikTok link: {fake_link}")
+
+        return make_response("success", "tiktok", link=fake_link, publishAt=data.publishDate or None)
+
+    except Exception as e:
+        logger.exception("Errore durante upload TikTok")
+        return make_response("error", "tiktok", error=str(e))
+
 
 
 if __name__ == "__main__":
