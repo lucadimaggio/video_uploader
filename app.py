@@ -21,8 +21,8 @@ YOUTUBE_CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
 YOUTUBE_CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
 YOUTUBE_REFRESH_TOKEN = os.environ["YOUTUBE_REFRESH_TOKEN"]
 
-META_IG_TOKEN = os.environ["META_IG_TOKEN"]
-META_FB_TOKEN = os.environ["META_FB_TOKEN"]
+META_PAGE_TOKEN = os.environ["META_PAGE_TOKEN"]
+META_PAGE_TOKEN = os.environ["META_PAGE_TOKEN"]
 FB_PAGE_ID = os.environ["FB_PAGE_ID"]
 IG_ACCOUNT_ID = os.environ["IG_ACCOUNT_ID"]
 META_APP_ID = os.environ["META_APP_ID"]
@@ -99,7 +99,7 @@ def upload_facebook(data: VideoData):
         payload = {
             "title": data.title,
             "description": data.description,
-            "access_token": META_FB_TOKEN
+            "access_token": META_PAGE_TOKEN
         }
 
         res = requests.post(url, data=payload, files=files)
@@ -119,7 +119,7 @@ def upload_facebook(data: VideoData):
         url_permalink = f"https://graph.facebook.com/v23.0/{video_id}"
         params = {
             "fields": "permalink_url",
-            "access_token": META_FB_TOKEN
+            "access_token": META_PAGE_TOKEN
         }
         res_link = requests.get(url_permalink, params=params)
         if res_link.status_code != 200:
@@ -192,7 +192,7 @@ def upload_instagram(data: VideoData):
             "video_url": video_url,
             "caption": data.description,
             "media_type": "REELS",
-            "access_token": META_IG_TOKEN
+            "access_token": META_PAGE_TOKEN
         }
         res_media = requests.post(url_media, data=payload_media)
         if res_media.status_code != 200:
@@ -205,7 +205,7 @@ def upload_instagram(data: VideoData):
 
         # Attendi che Instagram completi l'elaborazione del video
         import time
-        status_url = f"https://graph.facebook.com/v23.0/{creation_id}?fields=status_code&access_token={META_IG_TOKEN}"
+        status_url = f"https://graph.facebook.com/v23.0/{creation_id}?fields=status_code&access_token={META_PAGE_TOKEN}"
 
         for i in range(30):  # controllo ogni 2 secondi per massimo ~60 secondi
             res_status = requests.get(status_url)
@@ -229,7 +229,7 @@ def upload_instagram(data: VideoData):
         url_publish = f"https://graph.facebook.com/v23.0/{IG_ACCOUNT_ID}/media_publish"
         payload_pub = {
             "creation_id": creation_id,
-            "access_token": META_IG_TOKEN
+            "access_token": META_PAGE_TOKEN
         }
         res_pub = requests.post(url_publish, data=payload_pub)
 
@@ -242,7 +242,7 @@ def upload_instagram(data: VideoData):
 
         # Recupera il permalink
         url_permalink = f"https://graph.facebook.com/v23.0/{post_id}"
-        params = {"fields": "permalink", "access_token": META_IG_TOKEN}
+        params = {"fields": "permalink", "access_token": META_PAGE_TOKEN}
         res_link = requests.get(url_permalink, params=params)
         if res_link.status_code != 200:
             error_msg = res_link.json().get("error", {}).get("message", res_link.text)
@@ -381,7 +381,7 @@ def refresh_meta_token():
 
         META_APP_ID = os.environ["META_APP_ID"]
         META_APP_SECRET = os.environ["META_APP_SECRET"]
-        META_FB_TOKEN = os.environ["META_FB_TOKEN"]
+        META_PAGE_TOKEN = os.environ["META_PAGE_TOKEN"]
         FB_PAGE_ID = os.environ["FB_PAGE_ID"]
         IG_ACCOUNT_ID = os.environ.get("IG_ACCOUNT_ID")
 
@@ -390,7 +390,7 @@ def refresh_meta_token():
         refresh_url = (
             f"https://graph.facebook.com/v23.0/oauth/access_token?"
             f"grant_type=fb_exchange_token&client_id={META_APP_ID}&"
-            f"client_secret={META_APP_SECRET}&fb_exchange_token={META_FB_TOKEN}"
+            f"client_secret={META_APP_SECRET}&fb_exchange_token={META_PAGE_TOKEN}"
         )
         res = requests.get(refresh_url)
         if res.status_code != 200:
@@ -419,15 +419,15 @@ def refresh_meta_token():
         except Exception as e:
             logger.warning(f"⚠️ Errore durante richiesta /me/accounts: {e}")
 
-        # Se non trovato, verifica se META_FB_TOKEN è già un Page Token valido
+        # Se non trovato, verifica se META_PAGE_TOKEN è già un Page Token valido
         if not page_token:
             logger.info("🔍 Nessun page token trovato, provo a validare il token esistente...")
             test_res = requests.get(
-                f"https://graph.facebook.com/v23.0/me?fields=id,name&access_token={META_FB_TOKEN}"
+                f"https://graph.facebook.com/v23.0/me?fields=id,name&access_token={META_PAGE_TOKEN}"
             )
             if test_res.status_code == 200:
                 logger.info("✅ Token esistente è un Page Token valido. Lo utilizzo.")
-                page_token = META_FB_TOKEN
+                page_token = META_PAGE_TOKEN
             else:
                 logger.error("❌ Page token non trovato né valido.")
                 return make_response("error", "meta", error="Page token non trovato o non valido.")
@@ -461,12 +461,12 @@ def refresh_meta_token():
             ig_token = page_token
             logger.info("✅ IG token valido e aggiornato.")
         else:
-            ig_token = os.environ.get("META_IG_TOKEN")
+            ig_token = os.environ.get("META_PAGE_TOKEN")
             logger.warning(f"⚠️ IG token non validato, mantengo quello esistente: {ig_test_res.text}")
 
         # STEP 5️⃣ — Aggiorna variabili d’ambiente e file .env
-        os.environ["META_FB_TOKEN"] = page_token
-        os.environ["META_IG_TOKEN"] = ig_token
+        os.environ["META_PAGE_TOKEN"] = page_token
+        os.environ["META_PAGE_TOKEN"] = ig_token
         os.environ["IG_ACCOUNT_ID"] = IG_ACCOUNT_ID or ""
 
         env_path = ".env"
@@ -486,8 +486,8 @@ def refresh_meta_token():
                 lines = f.readlines()
 
         for key, value in {
-            "META_FB_TOKEN": page_token,
-            "META_IG_TOKEN": ig_token,
+            "META_PAGE_TOKEN": page_token,
+            "META_PAGE_TOKEN": ig_token,
             "IG_ACCOUNT_ID": IG_ACCOUNT_ID or "",
         }.items():
             lines = update_or_add(lines, key, value)
@@ -531,8 +531,8 @@ def update_meta_token(request: dict):
             return make_response("error", "meta", error="Accesso non autorizzato")
 
         # ✅ Recupera nuovi token
-        new_fb_token = request.get("META_FB_TOKEN")
-        new_ig_token = request.get("META_IG_TOKEN")
+        new_fb_token = request.get("META_PAGE_TOKEN")
+        new_ig_token = request.get("META_PAGE_TOKEN")
 
         if not new_fb_token and not new_ig_token:
             logger.warning("Nessun token fornito nella richiesta.")
@@ -540,11 +540,11 @@ def update_meta_token(request: dict):
 
         # ✅ Aggiorna variabili d’ambiente attive
         if new_fb_token:
-            os.environ["META_FB_TOKEN"] = new_fb_token
-            logger.info("Variabile META_FB_TOKEN aggiornata in memoria.")
+            os.environ["META_PAGE_TOKEN"] = new_fb_token
+            logger.info("Variabile META_PAGE_TOKEN aggiornata in memoria.")
         if new_ig_token:
-            os.environ["META_IG_TOKEN"] = new_ig_token
-            logger.info("Variabile META_IG_TOKEN aggiornata in memoria.")
+            os.environ["META_PAGE_TOKEN"] = new_ig_token
+            logger.info("Variabile META_PAGE_TOKEN aggiornata in memoria.")
 
         # ✅ Aggiorna file .env (persistenza su Railway)
         env_path = ".env"
@@ -564,9 +564,9 @@ def update_meta_token(request: dict):
             return lines
 
         if new_fb_token:
-            lines = update_or_add(lines, "META_FB_TOKEN", new_fb_token)
+            lines = update_or_add(lines, "META_PAGE_TOKEN", new_fb_token)
         if new_ig_token:
-            lines = update_or_add(lines, "META_IG_TOKEN", new_ig_token)
+            lines = update_or_add(lines, "META_PAGE_TOKEN", new_ig_token)
 
         with open(env_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
