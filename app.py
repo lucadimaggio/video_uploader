@@ -579,6 +579,67 @@ def update_meta_token(request: dict):
         logger.exception("Errore durante l'aggiornamento dei token Meta.")
         return make_response("error", "meta", error=str(e))
 
+from fastapi.responses import RedirectResponse
+
+# URL di redirect registrato su Google Cloud per YouTube OAuth
+REDIRECT_URI = "https://videouploader-production-2002.up.railway.app/oauth2callback"
+
+@app.get("/auth/youtube")
+def auth_youtube():
+    """
+    Inizia il flusso OAuth YouTube: reindirizza l'utente alla pagina di login Google.
+    """
+    params = {
+        "client_id": YOUTUBE_CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/youtube.upload",
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + "&".join(
+        [f"{k}={v}" for k, v in params.items()]
+    )
+    return RedirectResponse(auth_url)
+
+
+@app.get("/oauth2callback")
+def oauth2callback(code: str = None, error: str = None):
+    """
+    Endpoint di callback che riceve il 'code' da Google e lo scambia per il refresh_token.
+    """
+    if error:
+        logger.error(f"Errore OAuth YouTube: {error}")
+        raise HTTPException(status_code=400, detail=error)
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code")
+
+    logger.info(f"Ricevuto code OAuth YouTube: {code}")
+
+    # Scambia il code per i token
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "code": code,
+        "client_id": YOUTUBE_CLIENT_ID,
+        "client_secret": YOUTUBE_CLIENT_SECRET,
+        "redirect_uri": REDIRECT_URI,
+        "grant_type": "authorization_code",
+    }
+
+    res = requests.post(token_url, data=data)
+    tokens = res.json()
+
+    if "refresh_token" not in tokens:
+        logger.error(f"Errore nel recupero del refresh_token: {tokens}")
+        raise HTTPException(status_code=400, detail=tokens)
+
+    refresh_token = tokens["refresh_token"]
+    logger.info(f"✅ Nuovo refresh_token ottenuto: {refresh_token}")
+
+    # Puoi inviare questo token a n8n o salvarlo su Railway manualmente
+    return {"refresh_token": refresh_token}
+
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
