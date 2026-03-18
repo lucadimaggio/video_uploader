@@ -41,10 +41,17 @@ def verify_api_key(x_api_key: str = Header(...)):
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class UploadRequest(BaseModel):
-    video_url:  str           # Google Drive direct download URL
-    filename:   str           # Nome originale (verrà sanitizzato)
-    caption:    str
-    platforms:  list[str] = ["youtube", "facebook", "instagram"]
+    video_url:      str
+    filename:       str
+    platforms:      list[str] = ["youtube", "facebook", "instagram"]
+    # YouTube
+    yt_title:       str = ""
+    yt_description: str = ""
+    yt_privacy:     str = "public"
+    # Instagram
+    ig_caption:     str = ""
+    # Facebook
+    fb_description: str = ""
 
     @field_validator("platforms", mode="before")
     @classmethod
@@ -121,13 +128,16 @@ def upload(body: UploadRequest):
 
     # ── 3. YouTube (da file locale) ───────────────────────────────────────────
     if "youtube" in body.platforms:
-        res = yt_upload(filepath, title=body.caption)
+        yt_title = body.yt_title or safe_name.replace("_", " ").replace(".mp4", "")
+        yt_desc  = body.yt_description or ""
+        res = yt_upload(filepath, title=yt_title, description=yt_desc, privacy=body.yt_privacy)
         results["youtube"] = res
         logger.info(f"[YT] {res}")
 
     # ── 4. Facebook (da URL R2) ───────────────────────────────────────────────
     if "facebook" in body.platforms:
-        res = fb_upload(video_url, description=body.caption)
+        fb_desc = body.fb_description or safe_name.replace("_", " ").replace(".mp4", "")
+        res = fb_upload(video_url, description=fb_desc)
         results["facebook"] = res
         logger.info(f"[FB] {res}")
 
@@ -150,7 +160,8 @@ def upload(body: UploadRequest):
             for w in check.get("warnings", []):
                 logger.warning(f"[IG CHECK] WARNING: {w}")
 
-            res = upload_reel(video_url, body.caption)
+            ig_cap = body.ig_caption or safe_name.replace("_", " ").replace(".mp4", "")
+            res = upload_reel(video_url, ig_cap)
             results["instagram"] = res
             logger.info(f"[IG] {res}")
 
