@@ -10,7 +10,7 @@ import tempfile
 import requests as req_lib
 
 from fastapi import FastAPI, HTTPException, Header, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from video_utils import sanitize_filename, check_instagram_requirements
 from api_instagram import upload_reel
@@ -45,6 +45,14 @@ class UploadRequest(BaseModel):
     filename:   str           # Nome originale (verrà sanitizzato)
     caption:    str
     platforms:  list[str] = ["youtube", "facebook", "instagram"]
+
+    @field_validator("platforms", mode="before")
+    @classmethod
+    def parse_platforms(cls, v):
+        if isinstance(v, str):
+            import json as _json
+            return _json.loads(v)
+        return v
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
