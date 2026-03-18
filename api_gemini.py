@@ -22,8 +22,8 @@ Regole tassative:
 - Niente punti esclamativi
 - Tono professionale, diretto, mai markettaro o entusiasta
 - Non invitare a scrivere in DM, non invitare a contattare
-- L'unica CTA consentita (solo se pertinente al contenuto) e' questa frase esatta: "Sul nostro canale YouTube trovi casi studio di e-commerce reali che fatturano 50k al mese o piu."
-- Se la CTA non e' pertinente, omettila
+- Scrivi sempre "E-Commerce" (maiuscolo, con trattino) e mai "e-commerce" o "ecommerce"
+- In ogni testo (YouTube, Instagram, Facebook) inserisci sempre questa frase: "Sul nostro canale YouTube trovi casi studio di E-Commerce reali che fatturano 50k al mese o piu."
 
 Rispondi SOLO con JSON valido, senza markdown, senza spiegazioni:
 {
