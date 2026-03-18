@@ -1,0 +1,3 @@
+# Installa ffmpeg (include ffprobe) nell'ambiente Railway
+[phases.setup]
+nixPkgs = ["ffmpeg"]
