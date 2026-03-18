@@ -17,6 +17,7 @@ from api_instagram import upload_reel
 from api_youtube import upload_video as yt_upload
 from api_facebook import upload_video as fb_upload
 from api_r2 import upload_to_r2, delete_from_r2
+from api_gemini import generate_metadata
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,14 +120,25 @@ def upload(body: UploadRequest):
 
     logger.info(f"[PIPELINE] File pronto: {filepath} ({os.path.getsize(filepath)/1024/1024:.1f}MB)")
 
-    # ── 2. Upload su R2 (URL pubblico per IG e FB) ────────────────────────────
+    # ── 2. Genera metadati con Gemini (se non forniti) ────────────────────────
+    needs_gemini = not all([body.yt_title, body.ig_caption, body.fb_description])
+    if needs_gemini:
+        logger.info("[GEMINI] Campi mancanti — generazione automatica metadati...")
+        meta = generate_metadata(filepath)
+        if not body.yt_title:       body.yt_title       = meta.get("yt_title", "")
+        if not body.yt_description: body.yt_description = meta.get("yt_description", "")
+        if not body.ig_caption:     body.ig_caption     = meta.get("ig_caption", "")
+        if not body.fb_description: body.fb_description = meta.get("fb_description", "")
+        logger.info(f"[GEMINI] Metadati applicati: {meta}")
+
+    # ── 3. Upload su R2 (URL pubblico per IG e FB) ────────────────────────────
     try:
         r2_key    = f"videos/{safe_name}"
         video_url = upload_to_r2(filepath, r2_key)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload R2 fallito: {e}")
 
-    # ── 3. YouTube (da file locale) ───────────────────────────────────────────
+    # ── 4. YouTube (da file locale) ───────────────────────────────────────────
     if "youtube" in body.platforms:
         yt_title = body.yt_title or safe_name.replace("_", " ").replace(".mp4", "")
         yt_desc  = body.yt_description or ""
@@ -134,14 +146,14 @@ def upload(body: UploadRequest):
         results["youtube"] = res
         logger.info(f"[YT] {res}")
 
-    # ── 4. Facebook (da URL R2) ───────────────────────────────────────────────
+    # ── 5. Facebook (da URL R2) ───────────────────────────────────────────────
     if "facebook" in body.platforms:
         fb_desc = body.fb_description or safe_name.replace("_", " ").replace(".mp4", "")
         res = fb_upload(video_url, description=fb_desc)
         results["facebook"] = res
         logger.info(f"[FB] {res}")
 
-    # ── 5. Instagram (da URL R2, con check) ───────────────────────────────────
+    # ── 6. Instagram (da URL R2, con check) ───────────────────────────────────
     if "instagram" in body.platforms:
         check = check_instagram_requirements(filepath)
         logger.info(f"[IG CHECK] {check}")

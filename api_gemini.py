@@ -1,0 +1,100 @@
+"""
+api_gemini.py — Genera metadati automatici dal video usando Gemini 2.0 Flash.
+Carica il video sulla Gemini File API, poi chiede titolo/descrizione/caption.
+"""
+import os
+import time
+import json
+import logging
+import google.generativeai as genai
+
+logger = logging.getLogger(__name__)
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+PROMPT = """Guarda questo video. È un contenuto per i social media di BaseForce,
+un'azienda italiana di consulenza strategica per brand e-commerce su Shopify.
+
+Basandoti su ciò che viene detto e mostrato nel video, genera in italiano:
+
+Rispondi SOLO con JSON valido, senza markdown, senza spiegazioni:
+{
+  "yt_title": "titolo YouTube accattivante, max 60 caratteri",
+  "yt_description": "descrizione YouTube chiara e utile, max 200 caratteri",
+  "ig_caption": "caption Instagram coinvolgente + 5 hashtag rilevanti per ecommerce e business italiano, max 220 caratteri totali",
+  "fb_description": "descrizione Facebook naturale e diretta, max 200 caratteri"
+}"""
+
+
+def generate_metadata(video_path: str) -> dict:
+    """
+    Carica il video su Gemini File API e genera i metadati.
+    Restituisce dict con yt_title, yt_description, ig_caption, fb_description.
+    In caso di errore restituisce dict con valori vuoti.
+    """
+    if not GEMINI_API_KEY:
+        logger.warning("[GEMINI] API key mancante — metadati non generati")
+        return _empty()
+
+    genai.configure(api_key=GEMINI_API_KEY)
+
+    # 1. Upload file su Gemini File API
+    logger.info(f"[GEMINI] Upload video: {video_path}")
+    try:
+        video_file = genai.upload_file(path=video_path, mime_type="video/mp4")
+    except Exception as e:
+        logger.error(f"[GEMINI] Upload fallito: {e}")
+        return _empty()
+
+    # 2. Attendi che il file sia processato
+    logger.info("[GEMINI] Attendo elaborazione file...")
+    for _ in range(30):
+        video_file = genai.get_file(video_file.name)
+        if video_file.state.name == "ACTIVE":
+            break
+        if video_file.state.name == "FAILED":
+            logger.error("[GEMINI] Elaborazione file fallita")
+            return _empty()
+        time.sleep(3)
+    else:
+        logger.error("[GEMINI] Timeout elaborazione file")
+        return _empty()
+
+    # 3. Genera metadati
+    logger.info("[GEMINI] Generazione metadati...")
+    try:
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content([video_file, PROMPT])
+        raw = response.text.strip()
+        logger.info(f"[GEMINI] Risposta raw: {raw[:200]}")
+
+        # Pulizia eventuale markdown
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
+
+        metadata = json.loads(raw)
+        logger.info(f"[GEMINI] Metadati generati: {metadata}")
+        return metadata
+
+    except Exception as e:
+        logger.error(f"[GEMINI] Generazione fallita: {e}")
+        return _empty()
+
+    finally:
+        # Elimina il file da Gemini per non accumulare storage
+        try:
+            genai.delete_file(video_file.name)
+        except Exception:
+            pass
+
+
+def _empty() -> dict:
+    return {
+        "yt_title": "",
+        "yt_description": "",
+        "ig_caption": "",
+        "fb_description": ""
+    }
