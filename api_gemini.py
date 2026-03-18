@@ -15,14 +15,22 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PROMPT = """Guarda questo video. È un contenuto per i social media di BaseForce,
 un'azienda italiana di consulenza strategica per brand e-commerce su Shopify.
 
-Basandoti su ciò che viene detto e mostrato nel video, genera in italiano:
+Basandoti su ciò che viene detto e mostrato nel video, genera in italiano i testi per la pubblicazione.
+
+Regole tassative:
+- Niente emoji
+- Niente punti esclamativi
+- Tono professionale, diretto, mai markettaro o entusiasta
+- Non invitare a scrivere in DM, non invitare a contattare
+- L'unica CTA consentita (solo se pertinente al contenuto) e' questa frase esatta: "Sul nostro canale YouTube trovi casi studio di e-commerce reali che fatturano 50k al mese o piu."
+- Se la CTA non e' pertinente, omettila
 
 Rispondi SOLO con JSON valido, senza markdown, senza spiegazioni:
 {
-  "yt_title": "titolo YouTube accattivante, max 60 caratteri",
-  "yt_description": "descrizione YouTube chiara e utile, max 200 caratteri",
-  "ig_caption": "caption Instagram coinvolgente + 5 hashtag rilevanti per ecommerce e business italiano, max 220 caratteri totali",
-  "fb_description": "descrizione Facebook naturale e diretta, max 200 caratteri"
+  "yt_title": "titolo descrittivo e chiaro, max 60 caratteri",
+  "yt_description": "descrizione YouTube informativa e sobria, max 200 caratteri",
+  "ig_caption": "caption Instagram diretta e professionale + 5 hashtag rilevanti per ecommerce e business italiano, max 250 caratteri totali",
+  "fb_description": "descrizione Facebook sobria e diretta, max 200 caratteri"
 }"""
 
 
