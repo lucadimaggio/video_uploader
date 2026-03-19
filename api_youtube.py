@@ -9,8 +9,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-TOKEN_URL  = "https://oauth2.googleapis.com/token"
-UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
+TOKEN_URL     = "https://oauth2.googleapis.com/token"
+UPLOAD_URL    = "https://www.googleapis.com/upload/youtube/v3/videos"
+THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 
 
 def _get_access_token() -> str:
@@ -59,3 +60,20 @@ def upload_video(filepath: str, title: str, description: str = "", privacy: str 
         return {"success": False, "video_id": None, "error": body.get("error", {}).get("message", "unknown")}
     except Exception as e:
         return {"success": False, "video_id": None, "error": str(e)}
+
+
+def set_thumbnail(video_id: str, thumbnail_path: str) -> bool:
+    try:
+        token = _get_access_token()
+        with open(thumbnail_path, "rb") as f:
+            r = requests.post(
+                THUMBNAIL_URL,
+                params={"videoId": video_id},
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "image/jpeg"},
+                data=f
+            )
+        logger.info(f"[YT THUMBNAIL] status={r.status_code} | {r.text[:200]}")
+        return r.status_code == 200
+    except Exception as e:
+        logger.warning(f"[YT THUMBNAIL] Fallita: {e}")
+        return False

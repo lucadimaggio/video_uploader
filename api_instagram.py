@@ -12,18 +12,21 @@ logger = logging.getLogger(__name__)
 GRAPH_URL = "https://graph.facebook.com/v19.0"
 
 
-def upload_reel(video_url: str, caption: str) -> dict:
+def upload_reel(video_url: str, caption: str, cover_url: str = "") -> dict:
     user_id = os.environ["IG_ACCOUNT_ID"]
     token   = os.environ["META_USER_TOKEN"]
 
     logger.info(f"[IG] Creo container per: {video_url}")
-    r1 = requests.post(f"{GRAPH_URL}/{user_id}/media", data={
+    payload = {
         "media_type":    "REELS",
         "video_url":     video_url,
         "caption":       caption,
         "share_to_feed": True,
         "access_token":  token,
-    })
+    }
+    if cover_url:
+        payload["cover_url"] = cover_url
+    r1 = requests.post(f"{GRAPH_URL}/{user_id}/media", data=payload)
     _log_raw("container_create", r1)
 
     body1 = r1.json()

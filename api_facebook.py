@@ -11,17 +11,20 @@ logger = logging.getLogger(__name__)
 GRAPH_URL = "https://graph.facebook.com/v19.0"
 
 
-def upload_video(video_url: str, description: str = "") -> dict:
+def upload_video(video_url: str, description: str = "", thumb_url: str = "") -> dict:
     page_id = os.environ["FB_PAGE_ID"]
     token   = os.environ["META_PAGE_TOKEN"]
 
     logger.info(f"[FB] Upload video da URL: {video_url}")
-    r = requests.post(f"{GRAPH_URL}/{page_id}/videos", data={
+    payload = {
         "file_url":     video_url,
         "description":  description,
         "published":    True,
         "access_token": token,
-    })
+    }
+    if thumb_url:
+        payload["thumb_url"] = thumb_url
+    r = requests.post(f"{GRAPH_URL}/{page_id}/videos", data=payload)
     logger.info(f"[FB RAW] status={r.status_code} | {r.text[:300]}")
 
     body = r.json()

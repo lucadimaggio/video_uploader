@@ -30,7 +30,8 @@ Rispondi SOLO con JSON valido, senza markdown, senza spiegazioni:
   "yt_title": "titolo descrittivo e chiaro, max 60 caratteri",
   "yt_description": "descrizione YouTube informativa e sobria, max 200 caratteri",
   "ig_caption": "caption Instagram diretta e professionale + 5 hashtag rilevanti per ecommerce e business italiano, max 250 caratteri totali",
-  "fb_description": "descrizione Facebook sobria e diretta, max 200 caratteri"
+  "fb_description": "descrizione Facebook sobria e diretta, max 200 caratteri",
+  "thumbnail_text": "frase breve 3-5 parole che inviti a guardare il video, stile headline, senza punteggiatura finale"
 }"""
 
 
@@ -104,5 +105,6 @@ def _empty() -> dict:
         "yt_title": "",
         "yt_description": "",
         "ig_caption": "",
-        "fb_description": ""
+        "fb_description": "",
+        "thumbnail_text": ""
     }

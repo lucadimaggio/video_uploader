@@ -17,10 +17,11 @@ from pydantic import BaseModel, field_validator
 
 from video_utils import sanitize_filename, check_instagram_requirements
 from api_instagram import upload_reel
-from api_youtube import upload_video as yt_upload
+from api_youtube import upload_video as yt_upload, set_thumbnail as yt_set_thumbnail
 from api_facebook import upload_video as fb_upload
 from api_r2 import upload_to_r2, delete_from_r2
 from api_gemini import generate_metadata
+from api_thumbnail import generate_thumbnail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -166,6 +167,22 @@ def run_publish(job: dict) -> dict:
     except Exception as e:
         raise RuntimeError(f"Download da R2 fallito: {e}")
 
+    # Genera thumbnail
+    thumb_path    = None
+    thumb_r2_key  = None
+    thumb_r2_url  = None
+    thumb_text    = meta.get("thumbnail_text") or meta.get("yt_title") or safe_name.replace("_", " ").replace(".mp4", "")
+    if thumb_text:
+        thumb_path = generate_thumbnail(filepath, thumb_text)
+        if thumb_path:
+            try:
+                thumb_r2_key = f"thumbnails/{job['job_id']}/thumb.jpg"
+                thumb_r2_url = upload_to_r2(thumb_path, thumb_r2_key)
+                logger.info(f"[THUMBNAIL] URL R2: {thumb_r2_url}")
+            except Exception as e:
+                logger.warning(f"[THUMBNAIL] Upload R2 fallito: {e}")
+                thumb_r2_url = None
+
     # YouTube
     if "youtube" in platforms:
         res = yt_upload(
@@ -176,12 +193,16 @@ def run_publish(job: dict) -> dict:
         )
         results["youtube"] = res
         logger.info(f"[YT] {res}")
+        # Imposta thumbnail YouTube
+        if res.get("success") and res.get("video_id") and thumb_path:
+            yt_set_thumbnail(res["video_id"], thumb_path)
 
     # Facebook
     if "facebook" in platforms:
         res = fb_upload(
             r2_url,
-            description=meta.get("fb_description") or safe_name.replace("_", " ").replace(".mp4", "")
+            description=meta.get("fb_description") or safe_name.replace("_", " ").replace(".mp4", ""),
+            thumb_url=thumb_r2_url or ""
         )
         results["facebook"] = res
         logger.info(f"[FB] {res}")
@@ -198,10 +219,10 @@ def run_publish(job: dict) -> dict:
                 f"*IG Upload BLOCCATO*\nFile: `{safe_name}`\nErrori: {err_str}"
             )
             logger.warning(f"[IG] Bloccato — file R2 conservato: {r2_key}")
-            r2_key = None  # Non eliminare
+            r2_key = None
         else:
             ig_cap = meta.get("ig_caption") or safe_name.replace("_", " ").replace(".mp4", "")
-            res = upload_reel(r2_url, ig_cap)
+            res = upload_reel(r2_url, ig_cap, cover_url=thumb_r2_url or "")
             results["instagram"] = res
             logger.info(f"[IG] {res}")
 
@@ -213,6 +234,18 @@ def run_publish(job: dict) -> dict:
                 )
                 logger.warning(f"[IG] Fallito — file R2 conservato: {r2_key}")
                 r2_key = None
+
+    # Cleanup thumbnail locale e R2
+    if thumb_path:
+        try:
+            os.remove(thumb_path)
+        except Exception:
+            pass
+    if thumb_r2_key:
+        try:
+            delete_from_r2(thumb_r2_key)
+        except Exception:
+            pass
 
     # Cleanup locale
     try:
