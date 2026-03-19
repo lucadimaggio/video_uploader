@@ -31,7 +31,7 @@ Rispondi SOLO con JSON valido, senza markdown, senza spiegazioni:
   "yt_description": "descrizione YouTube informativa e sobria, max 200 caratteri",
   "ig_caption": "caption Instagram diretta e professionale + 5 hashtag rilevanti per ecommerce e business italiano, max 250 caratteri totali",
   "fb_description": "descrizione Facebook sobria e diretta, max 200 caratteri",
-  "thumbnail_text": "frase breve 3-5 parole che inviti a guardare il video, stile headline, senza punteggiatura finale"
+  "thumbnail_text": "frase breve 3-5 parole che inviti a guardare il video, stile headline, includi punto interrogativo se la frase è una domanda"
 }"""
 
 

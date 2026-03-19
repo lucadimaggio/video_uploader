@@ -15,7 +15,7 @@ import logging
 import tempfile
 import requests as req_lib
 
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form
 from pydantic import BaseModel, field_validator
 
 from video_utils import sanitize_filename, check_instagram_requirements
@@ -44,7 +44,7 @@ def verify_api_key(x_api_key: str = Header(...)):
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class GenerateRequest(BaseModel):
-    video_url: str
+    video_url: str = ""
     filename:  str
 
 
@@ -105,25 +105,47 @@ def health():
 
 
 @app.post("/generate", dependencies=[Depends(verify_api_key)])
-def generate(body: GenerateRequest):
+async def generate(
+    file: UploadFile = File(None),
+    filename: str = Form(None),
+    video_url: str = Form(None),
+    x_api_key: str = Header(None)
+):
     """
-    1. Scarica video da Google Drive
-    2. Genera metadati con Gemini (titoli, caption, thumbnail_text)
+    Accetta file binario (multipart) da n8n oppure URL.
+    1. Salva/scarica il video
+    2. Genera metadati con Gemini
     3. Genera thumbnail con ffmpeg + Pillow
     4. Uploda video e thumbnail su R2
     5. Restituisce URLs R2 + metadati per n8n
     """
+    if INTERNAL_API_KEY and x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
     import uuid
     job_id    = str(uuid.uuid4())[:8]
-    safe_name = sanitize_filename(body.filename)
+    safe_name = sanitize_filename(filename or (file.filename if file else "video.mp4"))
 
-    # Download video
     tmp_dir  = tempfile.mkdtemp()
     filepath = os.path.join(tmp_dir, safe_name)
-    try:
-        download_video(body.video_url, filepath)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Download fallito: {e}")
+
+    if file:
+        # Ricezione file binario da n8n
+        logger.info(f"[GENERATE] Ricezione file binario: {safe_name}")
+        try:
+            content = await file.read()
+            with open(filepath, "wb") as f:
+                f.write(content)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Ricezione file fallita: {e}")
+    elif video_url:
+        # Fallback: download da URL
+        try:
+            download_video(video_url, filepath)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Download fallito: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Richiesto 'file' o 'video_url'")
 
     logger.info(f"[GENERATE] File: {filepath} ({os.path.getsize(filepath)/1024/1024:.1f}MB)")
 
