@@ -75,11 +75,26 @@ class PublishInstagramRequest(BaseModel):
 
 def download_video(url: str, dest_path: str):
     logger.info(f"[DOWNLOAD] {url}")
-    r = req_lib.get(url, stream=True, timeout=180)
+    session = req_lib.Session()
+    r = session.get(url, stream=True, timeout=180)
     r.raise_for_status()
+
+    # Google Drive mostra pagina di conferma per file grandi — gestisci il token
+    confirm_token = None
+    for key, value in r.cookies.items():
+        if key.startswith("download_warning"):
+            confirm_token = value
+            break
+    if confirm_token:
+        logger.info("[DOWNLOAD] Google Drive conferma richiesta — retry con token")
+        r = session.get(url, params={"confirm": confirm_token}, stream=True, timeout=180)
+        r.raise_for_status()
+
     with open(dest_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
+        for chunk in r.iter_content(chunk_size=32768):
+            if chunk:
+                f.write(chunk)
+    logger.info(f"[DOWNLOAD] Completato: {os.path.getsize(dest_path)/1024/1024:.1f}MB")
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -190,17 +205,12 @@ def publish_youtube(body: PublishYouTubeRequest):
             except Exception:
                 pass
 
-    # Cleanup
+    # Cleanup locale (non R2 — viene cancellato da /cleanup alla fine)
     try:
         os.remove(filepath)
         os.rmdir(tmp_dir)
     except Exception:
         pass
-    if body.r2_video_key:
-        try:
-            delete_from_r2(body.r2_video_key)
-        except Exception:
-            pass
 
     return res
 
@@ -245,3 +255,28 @@ def publish_instagram(body: PublishInstagramRequest):
     res     = upload_reel(body.r2_video_url, caption, cover_url=body.r2_thumb_url)
     logger.info(f"[IG] {res}")
     return res
+
+
+class CleanupRequest(BaseModel):
+    r2_video_key: str = ""
+    r2_thumb_key: str = ""
+
+    @field_validator("r2_video_key", "r2_thumb_key", mode="before")
+    @classmethod
+    def none_to_empty(cls, v):
+        return v or ""
+
+
+@app.post("/cleanup", dependencies=[Depends(verify_api_key)])
+def cleanup(body: CleanupRequest):
+    """Elimina video e thumbnail da R2 dopo la pubblicazione su tutte le piattaforme."""
+    deleted = []
+    for key in [body.r2_video_key, body.r2_thumb_key]:
+        if key:
+            try:
+                delete_from_r2(key)
+                deleted.append(key)
+                logger.info(f"[CLEANUP] Eliminato R2: {key}")
+            except Exception as e:
+                logger.warning(f"[CLEANUP] Fallito per {key}: {e}")
+    return {"deleted": deleted}
