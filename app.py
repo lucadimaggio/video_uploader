@@ -234,6 +234,7 @@ def publish_youtube(body: PublishYouTubeRequest):
     except Exception:
         pass
 
+    res["platform"] = "youtube"
     return res
 
 
@@ -246,6 +247,7 @@ def publish_facebook(body: PublishFacebookRequest):
         thumb_url=body.r2_thumb_url
     )
     logger.info(f"[FB] {res}")
+    res["platform"] = "facebook"
     return res
 
 
@@ -271,11 +273,12 @@ def publish_instagram(body: PublishInstagramRequest):
 
     if not check["ok"]:
         err_str = "; ".join(check["errors"])
-        return {"success": False, "error": f"Requisiti IG non soddisfatti: {err_str}"}
+        return {"success": False, "error": f"Requisiti IG non soddisfatti: {err_str}", "platform": "instagram"}
 
     caption = body.ig_caption or body.safe_filename.replace("_", " ").replace(".mp4", "")
     res     = upload_reel(body.r2_video_url, caption, cover_url=body.r2_thumb_url)
     logger.info(f"[IG] {res}")
+    res["platform"] = "instagram"
     return res
 
 
