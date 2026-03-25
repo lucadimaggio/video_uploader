@@ -7,18 +7,21 @@ Endpoints:
   POST /publish/youtube       — pubblica su YouTube + thumbnail
   POST /publish/facebook      — pubblica su Facebook + thumbnail
   POST /publish/instagram     — pubblica su Instagram + cover
+  POST /compress-for-ig       — reencoda video in h264/aac < max_size_mb, sovrascrive R2
   GET  /health
 """
 import os
 import json
 import logging
 import tempfile
+import subprocess
+import uuid
 import requests as req_lib
 
 from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form
 from pydantic import BaseModel, field_validator
 
-from video_utils import sanitize_filename, check_instagram_requirements
+from video_utils import sanitize_filename, check_instagram_requirements, get_video_info
 from api_instagram import upload_reel
 from api_youtube import upload_video as yt_upload, set_thumbnail as yt_set_thumbnail
 from api_facebook import upload_video as fb_upload
@@ -65,10 +68,17 @@ class PublishFacebookRequest(BaseModel):
 
 
 class PublishInstagramRequest(BaseModel):
-    r2_video_url:  str
-    r2_thumb_url:  str = ""
-    ig_caption:    str = ""
-    safe_filename: str
+    r2_video_url:   str
+    r2_thumb_url:   str = ""
+    ig_caption:     str = ""
+    safe_filename:  str
+    ig_was_retried: bool = False
+
+
+class CompressForIGRequest(BaseModel):
+    r2_video_url: str
+    r2_video_key: str
+    max_size_mb:  float = 95.0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -278,8 +288,102 @@ def publish_instagram(body: PublishInstagramRequest):
     caption = body.ig_caption or body.safe_filename.replace("_", " ").replace(".mp4", "")
     res     = upload_reel(body.r2_video_url, caption, cover_url=body.r2_thumb_url)
     logger.info(f"[IG] {res}")
-    res["platform"] = "instagram"
+    res["platform"]        = "instagram"
+    res["ig_was_retried"]  = body.ig_was_retried
     return res
+
+
+@app.post("/compress-for-ig", dependencies=[Depends(verify_api_key)])
+def compress_for_ig(body: CompressForIGRequest):
+    """
+    Scarica video da R2, lo reencoda in h264/aac sotto max_size_mb,
+    sovrascrive la stessa chiave R2 con la versione compressa.
+    Ritorna gli stessi r2_video_url e r2_video_key (ora puntano al file compresso).
+    """
+    job_id   = str(uuid.uuid4())[:8]
+    tmp_dir  = tempfile.mkdtemp()
+    in_path  = os.path.join(tmp_dir, f"src_{job_id}.mp4")
+    out_path = os.path.join(tmp_dir, f"ig_{job_id}.mp4")
+
+    try:
+        # Scarica da R2
+        try:
+            download_video(body.r2_video_url, in_path)
+        except Exception as e:
+            return {"success": False, "error": f"Download fallito: {e}"}
+
+        original_mb = os.path.getsize(in_path) / (1024 * 1024)
+        logger.info(f"[COMPRESS] File originale: {original_mb:.1f}MB")
+
+        # Ottieni durata per calcolare il bitrate target
+        try:
+            info     = get_video_info(in_path)
+            duration = float(info.get("format", {}).get("duration", 0))
+        except Exception as e:
+            return {"success": False, "error": f"ffprobe fallito: {e}"}
+
+        if duration <= 0:
+            return {"success": False, "error": "Durata video non rilevabile"}
+
+        # Bitrate target garantisce output < max_size_mb
+        audio_kbps = 128
+        target_total_kbps = int((body.max_size_mb * 8 * 1024) / duration)
+        video_kbps = min(target_total_kbps - audio_kbps, 8000)  # cap 8 Mbps
+
+        if video_kbps < 300:
+            return {
+                "success": False,
+                "error": f"Video troppo lungo ({duration:.0f}s) per comprimere a {body.max_size_mb}MB con qualità accettabile (bitrate risultante: {video_kbps}kbps)"
+            }
+
+        logger.info(f"[COMPRESS] duration={duration:.1f}s → video_bitrate={video_kbps}kbps, audio={audio_kbps}kbps")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", in_path,
+            "-c:v", "libx264",
+            "-b:v", f"{video_kbps}k",
+            "-maxrate", f"{video_kbps}k",
+            "-bufsize", f"{video_kbps * 2}k",
+            "-preset", "fast",
+            "-c:a", "aac",
+            "-b:a", f"{audio_kbps}k",
+            "-movflags", "+faststart",
+            out_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            logger.error(f"[COMPRESS] ffmpeg stderr: {result.stderr[-1000:]}")
+            return {"success": False, "error": f"ffmpeg fallito: {result.stderr[-400:]}"}
+
+        compressed_mb = os.path.getsize(out_path) / (1024 * 1024)
+        logger.info(f"[COMPRESS] Compresso: {original_mb:.1f}MB → {compressed_mb:.1f}MB")
+
+        # Sovrascrive la stessa chiave R2 — cleanup esistente funziona senza modifiche
+        try:
+            r2_url = upload_to_r2(out_path, body.r2_video_key)
+        except Exception as e:
+            return {"success": False, "error": f"Upload R2 fallito: {e}"}
+
+        return {
+            "success":           True,
+            "r2_video_url":      r2_url,
+            "r2_video_key":      body.r2_video_key,
+            "original_size_mb":  round(original_mb, 1),
+            "compressed_size_mb": round(compressed_mb, 1),
+            "video_bitrate_kbps": video_kbps,
+        }
+
+    finally:
+        for p in [in_path, out_path]:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+        try:
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
 
 
 class CleanupRequest(BaseModel):
