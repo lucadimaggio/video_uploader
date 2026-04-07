@@ -263,17 +263,79 @@ def publish_facebook(body: PublishFacebookRequest):
 
 @app.post("/publish/instagram", dependencies=[Depends(verify_api_key)])
 def publish_instagram(body: PublishInstagramRequest):
-    """Controlla requisiti IG, pubblica Reel con cover."""
+    """Controlla requisiti IG, pubblica Reel. Se file troppo grande o formato sbagliato, converte e riprova."""
     tmp_dir  = tempfile.mkdtemp()
-    filepath = os.path.join(tmp_dir, body.safe_filename)
+    filename = body.safe_filename or "video.mp4"
+    filepath = os.path.join(tmp_dir, filename)
 
     try:
         download_video(body.r2_video_url, filepath)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Download R2 fallito: {e}")
+        return {"success": False, "error": f"Download R2 fallito: {e}", "platform": "instagram"}
 
     check = check_instagram_requirements(filepath)
     logger.info(f"[IG CHECK] {check}")
+
+    video_url = body.r2_video_url
+    retried   = False
+
+    if not check["ok"]:
+        errors  = check["errors"]
+        err_str = "; ".join(errors)
+        needs_fix = any(
+            k in err_str.lower()
+            for k in ["troppo grande", "codec", "h.264", "aac", "formato", "hevc", "h265"]
+        )
+
+        if needs_fix:
+            logger.info(f"[IG] Problemi: {err_str} — converto con ffmpeg")
+            converted_path = os.path.join(tmp_dir, "converted.mp4")
+
+            try:
+                info     = get_video_info(filepath)
+                duration = float(info.get("format", {}).get("duration", 60))
+            except Exception:
+                duration = 60.0
+
+            target_mb   = 92.0
+            target_kbps = int((target_mb * 8 * 1024) / duration)
+            video_kbps  = max(500, target_kbps - 128)
+
+            cmd = [
+                "ffmpeg", "-y", "-i", filepath,
+                "-c:v", "libx264", "-preset", "fast", "-b:v", f"{video_kbps}k",
+                "-c:a", "aac", "-b:a", "128k",
+                converted_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"Requisiti IG non soddisfatti: {err_str}. Conversione fallita: {result.stderr[-300:]}",
+                    "platform": "instagram"
+                }
+
+            check2 = check_instagram_requirements(converted_path)
+            if not check2["ok"]:
+                return {
+                    "success": False,
+                    "error": f"Requisiti IG non soddisfatti anche dopo conversione: {'; '.join(check2['errors'])}",
+                    "platform": "instagram"
+                }
+
+            r2_key        = f"videos/{uuid.uuid4().hex[:8]}/{filename}"
+            r2_public_url = os.environ.get("R2_PUBLIC_URL", "")
+            upload_to_r2(converted_path, r2_key)
+            video_url = f"{r2_public_url}/{r2_key}"
+            retried   = True
+            logger.info(f"[IG] Re-uploadato convertito: {video_url}")
+        else:
+            try:
+                os.remove(filepath)
+                os.rmdir(tmp_dir)
+            except Exception:
+                pass
+            return {"success": False, "error": f"Requisiti IG non soddisfatti: {err_str}", "platform": "instagram"}
 
     try:
         os.remove(filepath)
@@ -281,15 +343,11 @@ def publish_instagram(body: PublishInstagramRequest):
     except Exception:
         pass
 
-    if not check["ok"]:
-        err_str = "; ".join(check["errors"])
-        return {"success": False, "error": f"Requisiti IG non soddisfatti: {err_str}", "platform": "instagram"}
-
-    caption = body.ig_caption or body.safe_filename.replace("_", " ").replace(".mp4", "")
-    res     = upload_reel(body.r2_video_url, caption, cover_url=body.r2_thumb_url)
+    caption = body.ig_caption or filename.replace("_", " ").replace(".mp4", "")
+    res = upload_reel(video_url, caption, cover_url=body.r2_thumb_url)
     logger.info(f"[IG] {res}")
-    res["platform"]        = "instagram"
-    res["ig_was_retried"]  = body.ig_was_retried
+    res["platform"] = "instagram"
+    res["retried"]  = retried
     return res
 
 
