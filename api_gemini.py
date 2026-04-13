@@ -31,7 +31,7 @@ Rispondi SOLO con JSON valido, senza markdown, senza spiegazioni:
   "yt_description": "descrizione YouTube informativa e sobria, max 200 caratteri",
   "ig_caption": "caption Instagram diretta e professionale + 5 hashtag rilevanti per ecommerce e business italiano, max 250 caratteri totali",
   "fb_description": "descrizione Facebook sobria e diretta, max 200 caratteri",
-  "thumbnail_text": "headline molto breve per copertina YouTube, ideale 2-4 parole, massimo 5 parole, evita parole troppo lunghe quando possibile, preferisci sinonimi piu corti, niente nomi inutili, deve essere leggibile grande su thumbnail"
+  "thumbnail_text": "headline molto breve per copertina YouTube, ideale 2-4 parole, massimo 5 parole. Deve essere specifica rispetto al punto chiave del video, non generica, non motivazionale, non da template. Evita formule banali come '3 consigli', 'errori da evitare', 'come fare', 'guida completa', 'strategia vincente' se non sono davvero il cuore del contenuto mostrato. Scegli l'angolo piu forte, concreto o sorprendente emerso nel video e trasformalo in poche parole nette, impattanti e riconoscibili. Preferisci parole corte e facili da leggere grandi su thumbnail, usa sinonimi piu brevi quando possibile, elimina nomi inutili e dettagli secondari."
 }"""
 
 

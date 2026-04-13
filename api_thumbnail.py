@@ -123,9 +123,9 @@ def _render(frame_path: str, text: str, output_path: str):
 
 def _fit_text(draw: ImageDraw.ImageDraw, text: str, box: tuple[int, int, int, int]):
     candidates = _build_candidates(text)
-    for candidate in candidates:
-        for font_size in range(START_FONT_SIZE, MIN_FONT_SIZE - 1, -FONT_STEP):
-            font = ImageFont.truetype(FONT_PATH, font_size)
+    for font_size in range(START_FONT_SIZE, MIN_FONT_SIZE - 1, -FONT_STEP):
+        font = ImageFont.truetype(FONT_PATH, font_size)
+        for candidate in candidates:
             lines = _wrap_words(draw, candidate, font, box[2] - box[0])
             if not lines:
                 continue
