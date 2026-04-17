@@ -27,7 +27,7 @@ Regole tassative:
 
 Rispondi SOLO con JSON valido, senza markdown, senza spiegazioni:
 {
-  "yt_title": "titolo descrittivo e chiaro, max 60 caratteri",
+  "yt_title": "titolo YouTube forte e specifico, 55-75 caratteri. Studia il contenuto reale del video e scegli l'angolo piu sorprendente, concreto o contro-intuitivo. Usa numeri precisi se emergono dal video (es. '47 clienti', '3x ROAS', '30 giorni'). Crea curiosity gap oppure enuncia il beneficio principale in modo diretto e netto. VIETATO: titoli vaghi, generici o motivazionali come 'Consigli per E-Commerce', 'Come migliorare le vendite', 'Strategia vincente'. Esempio buono: 'Come questo brand Shopify ha triplicato le conversioni in 45 giorni' — Esempio cattivo: 'Come aumentare le vendite online'.",
   "yt_description": "descrizione YouTube informativa e sobria, max 200 caratteri",
   "ig_caption": "caption Instagram diretta e professionale + 5 hashtag rilevanti per ecommerce e business italiano, max 250 caratteri totali",
   "fb_description": "descrizione Facebook sobria e diretta, max 200 caratteri",
