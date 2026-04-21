@@ -1,13 +1,13 @@
-﻿"""
-app.py â€” FastAPI server (Railway)
+"""
+app.py — FastAPI server (Railway)
 Flusso ibrido: n8n orchestra, FastAPI gestisce le parti Python.
 
 Endpoints:
-  POST /generate              â€” scarica video, Gemini, thumbnail, uploda R2
-  POST /publish/youtube       â€” pubblica su YouTube + thumbnail
-  POST /publish/facebook      â€” pubblica su Facebook + thumbnail
-  POST /publish/instagram     â€” pubblica su Instagram + cover
-  POST /compress-for-ig       â€” reencoda video in h264/aac < max_size_mb, sovrascrive R2
+  POST /generate              — scarica video, Gemini, thumbnail, uploda R2
+  POST /publish/youtube       — pubblica su YouTube + thumbnail
+  POST /publish/facebook      — pubblica su Facebook + thumbnail
+  POST /publish/instagram     — pubblica su Instagram + cover
+  POST /compress-for-ig       — reencoda video in h264/aac < max_size_mb, sovrascrive R2
   GET  /health
 """
 import os
@@ -37,14 +37,14 @@ app = FastAPI(title="Video Uploader")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
 
 
-# â”€â”€ Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Auth ──────────────────────────────────────────────────────────────────────
 
 def verify_api_key(x_api_key: str = Header(...)):
     if INTERNAL_API_KEY and x_api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-# â”€â”€ Models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Models ────────────────────────────────────────────────────────────────────
 
 class GenerateRequest(BaseModel):
     video_url: str = ""
@@ -81,7 +81,7 @@ class CompressForIGRequest(BaseModel):
     max_size_mb:  float = 95.0
 
 
-# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def download_video(url: str, dest_path: str):
     logger.info(f"[DOWNLOAD] {url}")
@@ -105,6 +105,8 @@ def download_video(url: str, dest_path: str):
     logger.info(f"[DOWNLOAD] Completato: {os.path.getsize(dest_path)/1024/1024:.1f}MB")
 
 
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
@@ -161,6 +163,7 @@ async def generate(
     logger.info(f"[GENERATE] Metadati: {meta}")
     if not meta.get("yt_title", "").strip() or not meta.get("thumbnail_text", "").strip():
         raise HTTPException(status_code=502, detail="Gemini ha restituito metadati incompleti (titolo o thumbnail_text vuoto)")
+
     # Thumbnail
     thumb_r2_url = ""
     thumb_r2_key = ""
@@ -235,7 +238,7 @@ def publish_youtube(body: PublishYouTubeRequest):
             except Exception:
                 pass
 
-    # Cleanup locale (non R2 â€” viene cancellato da /cleanup alla fine)
+    # Cleanup locale (non R2 — viene cancellato da /cleanup alla fine)
     try:
         os.remove(filepath)
         os.rmdir(tmp_dir)
@@ -286,7 +289,7 @@ def publish_instagram(body: PublishInstagramRequest):
         )
 
         if needs_fix:
-            logger.info(f"[IG] Problemi: {err_str} â€” converto con ffmpeg")
+            logger.info(f"[IG] Problemi: {err_str} — converto con ffmpeg")
             converted_path = os.path.join(tmp_dir, "converted.mp4")
 
             try:
@@ -389,10 +392,10 @@ def compress_for_ig(body: CompressForIGRequest):
         if video_kbps < 300:
             return {
                 "success": False,
-                "error": f"Video troppo lungo ({duration:.0f}s) per comprimere a {body.max_size_mb}MB con qualitÃ  accettabile (bitrate risultante: {video_kbps}kbps)"
+                "error": f"Video troppo lungo ({duration:.0f}s) per comprimere a {body.max_size_mb}MB con qualità accettabile (bitrate risultante: {video_kbps}kbps)"
             }
 
-        logger.info(f"[COMPRESS] duration={duration:.1f}s â†’ video_bitrate={video_kbps}kbps, audio={audio_kbps}kbps")
+        logger.info(f"[COMPRESS] duration={duration:.1f}s → video_bitrate={video_kbps}kbps, audio={audio_kbps}kbps")
 
         cmd = [
             "ffmpeg", "-y",
@@ -413,9 +416,9 @@ def compress_for_ig(body: CompressForIGRequest):
             return {"success": False, "error": f"ffmpeg fallito: {result.stderr[-400:]}"}
 
         compressed_mb = os.path.getsize(out_path) / (1024 * 1024)
-        logger.info(f"[COMPRESS] Compresso: {original_mb:.1f}MB â†’ {compressed_mb:.1f}MB")
+        logger.info(f"[COMPRESS] Compresso: {original_mb:.1f}MB → {compressed_mb:.1f}MB")
 
-        # Sovrascrive la stessa chiave R2 â€” cleanup esistente funziona senza modifiche
+        # Sovrascrive la stessa chiave R2 — cleanup esistente funziona senza modifiche
         try:
             r2_url = upload_to_r2(out_path, body.r2_video_key)
         except Exception as e:
@@ -465,4 +468,3 @@ def cleanup(body: CleanupRequest):
             except Exception as e:
                 logger.warning(f"[CLEANUP] Fallito per {key}: {e}")
     return {"deleted": deleted}
-
