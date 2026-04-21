@@ -88,18 +88,16 @@ def download_video(url: str, dest_path: str):
     session = req_lib.Session()
     r = session.get(url, stream=True, timeout=180)
     r.raise_for_status()
-
-    # Google Drive mostra pagina di conferma per file grandi — gestisci il token
+    # Google Drive mostra pagina di conferma per file grandi ? gestisci il token
     confirm_token = None
     for key, value in r.cookies.items():
         if key.startswith("download_warning"):
             confirm_token = value
             break
     if confirm_token:
-        logger.info("[DOWNLOAD] Google Drive conferma richiesta — retry con token")
+        logger.info("[DOWNLOAD] Google Drive conferma richiesta ? retry con token")
         r = session.get(url, params={"confirm": confirm_token}, stream=True, timeout=180)
         r.raise_for_status()
-
     with open(dest_path, "wb") as f:
         for chunk in r.iter_content(chunk_size=32768):
             if chunk:
@@ -107,6 +105,24 @@ def download_video(url: str, dest_path: str):
     logger.info(f"[DOWNLOAD] Completato: {os.path.getsize(dest_path)/1024/1024:.1f}MB")
 
 
+def send_telegram_alert(message: str):
+    try:
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "1073615387")
+        if not token:
+            logger.warning("[TELEGRAM] TELEGRAM_BOT_TOKEN assente: alert non inviato")
+            return
+        req_lib.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "Markdown"
+            },
+            timeout=10
+        )
+    except Exception as e:
+        logger.warning(f"[TELEGRAM] Invio alert fallito: {e}")
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -162,6 +178,13 @@ async def generate(
     # Gemini metadati
     meta = generate_metadata(filepath)
     logger.info(f"[GENERATE] Metadati: {meta}")
+    if not meta.get("yt_title", "").strip() or not meta.get("thumbnail_text", "").strip():
+        send_telegram_alert(
+            f"\u26A0\uFE0F Generazione metadati fallita\n"
+            f"File: `{safe_name}`\n"
+            "Gemini ha restituito titolo o thumbnail_text vuoti. Il video non \u00E8 stato pubblicato."
+        )
+        raise HTTPException(status_code=502, detail="Gemini ha restituito metadati incompleti (titolo o thumbnail_text vuoto)")
 
     # Thumbnail
     thumb_r2_url = ""
