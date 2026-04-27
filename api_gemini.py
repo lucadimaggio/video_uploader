@@ -113,7 +113,7 @@ def generate_metadata(video_path: str, filename: str = "") -> dict:
 
             # 3. Genera metadati
             logger.info("[GEMINI] Generazione metadati...")
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel("gemini-2.5-flash-preview-05-20")
             response = model.generate_content([video_file, prompt])
             raw = response.text.strip()
             logger.info(f"[GEMINI] Risposta raw: {raw[:200]}")
