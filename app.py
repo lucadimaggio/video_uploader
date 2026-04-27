@@ -26,7 +26,7 @@ from api_instagram import upload_reel
 from api_youtube import upload_video as yt_upload, set_thumbnail as yt_set_thumbnail
 from api_facebook import upload_video as fb_upload
 from api_r2 import upload_to_r2, delete_from_r2
-from api_gemini import generate_metadata
+from api_gemini import IncompleteGeminiMetadataError, generate_metadata
 from api_thumbnail import generate_thumbnail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -133,7 +133,8 @@ async def generate(
 
     import uuid
     job_id    = str(uuid.uuid4())[:8]
-    safe_name = sanitize_filename(filename or (file.filename if file else "video.mp4"))
+    source_filename = filename or (file.filename if file else "video.mp4")
+    safe_name = sanitize_filename(source_filename)
 
     tmp_dir  = tempfile.mkdtemp()
     filepath = os.path.join(tmp_dir, safe_name)
@@ -159,10 +160,15 @@ async def generate(
     logger.info(f"[GENERATE] File: {filepath} ({os.path.getsize(filepath)/1024/1024:.1f}MB)")
 
     # Gemini metadati
-    meta = generate_metadata(filepath)
+    try:
+        meta = generate_metadata(filepath, filename=source_filename)
+    except IncompleteGeminiMetadataError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gemini ha fallito la generazione metadati: {e}")
     logger.info(f"[GENERATE] Metadati: {meta}")
     if not meta.get("yt_title", "").strip() or not meta.get("thumbnail_text", "").strip():
-        raise HTTPException(status_code=502, detail="Gemini ha restituito metadati incompleti (titolo o thumbnail_text vuoto)")
+        raise HTTPException(status_code=422, detail="Gemini ha restituito metadati incompleti (titolo o thumbnail_text vuoto)")
 
     # Thumbnail
     thumb_r2_url = ""
