@@ -7,15 +7,50 @@ import re
 import time
 import json
 import logging
+import random
 import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-preview-05-20")
+GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "30"))
+GEMINI_MAX_ATTEMPTS = int(os.environ.get("GEMINI_MAX_ATTEMPTS", "3"))
 
 
 class IncompleteGeminiMetadataError(RuntimeError):
     pass
+
+
+class GeminiGenerationError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "gemini_error",
+        http_status: int = 502,
+        retryable: bool = True,
+        fallback_allowed: bool = True,
+        retry_after_seconds: int | None = None,
+        model: str | None = None,
+        original_error: Exception | None = None,
+    ):
+        super().__init__(message)
+        self.error_code = error_code
+        self.http_status = http_status
+        self.retryable = retryable
+        self.fallback_allowed = fallback_allowed
+        self.retry_after_seconds = retry_after_seconds
+        self.model = model
+        self.original_error = original_error
+
+    def to_n8n_detail(self) -> dict:
+        detail = {"error": self.error_code, "detail": str(self)}
+        if self.retry_after_seconds is not None:
+            detail["retry_after_seconds"] = self.retry_after_seconds
+        if self.model:
+            detail["model"] = self.model
+        return detail
 
 PROMPT = """Guarda questo video. È un contenuto per i social media di BaseForce,
 un'azienda italiana di consulenza strategica per brand e-commerce su Shopify.
@@ -71,35 +106,233 @@ def _has_required_metadata(metadata: dict) -> bool:
     )
 
 
-def generate_metadata(video_path: str, filename: str = "") -> dict:
-    """
-    Carica il video su Gemini File API e genera i metadati.
-    Restituisce dict con yt_title, yt_description, ig_caption, fb_description.
-    In caso di errore ritenta automaticamente; se fallisce sempre, solleva RuntimeError.
-    """
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Gemini: API key mancante")
+def _sanitize_log_text(value: object, max_chars: int = 300) -> str:
+    text = str(value or "")
+    if GEMINI_API_KEY:
+        text = text.replace(GEMINI_API_KEY, "***GEMINI_API_KEY***")
+    text = re.sub(r"AIza[0-9A-Za-z_-]{20,}", "***GEMINI_API_KEY***", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:max_chars]
 
-    genai.configure(api_key=GEMINI_API_KEY)
-    retry_delay = 2
-    last_error = None
-    prompt_filename = sanitize_prompt_filename(filename or os.path.basename(video_path))
-    prompt = (
-        f"Nome file sanitizzato da usare solo come contesto, non come titolo automatico: {prompt_filename}\n\n"
-        + PROMPT
-        + TITLE_QUALITY_PROMPT
+
+def _exception_status_code(exc: Exception) -> int | None:
+    for attr in ("code", "status_code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+        if hasattr(value, "value") and isinstance(value.value, int):
+            return value.value
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    return status_code if isinstance(status_code, int) else None
+
+
+def _exception_response_preview(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return ""
+    body = getattr(response, "text", None) or getattr(response, "content", None) or ""
+    return _sanitize_log_text(body, 200)
+
+
+def _classify_gemini_error(exc: Exception, *, model: str) -> GeminiGenerationError:
+    if isinstance(exc, GeminiGenerationError):
+        return exc
+    if isinstance(exc, IncompleteGeminiMetadataError):
+        return GeminiGenerationError(
+            str(exc),
+            error_code="parse_error",
+            http_status=502,
+            retryable=True,
+            fallback_allowed=True,
+            model=model,
+            original_error=exc,
+        )
+
+    status_code = _exception_status_code(exc)
+    name = type(exc).__name__
+    message = _sanitize_log_text(exc, 300)
+    haystack = f"{name} {message}".lower()
+
+    if status_code == 429 or "resourceexhausted" in haystack or "quota" in haystack or "rate limit" in haystack:
+        return GeminiGenerationError(
+            "Quota o rate limit Gemini raggiunto",
+            error_code="rate_limit",
+            http_status=429,
+            retryable=True,
+            fallback_allowed=True,
+            retry_after_seconds=30,
+            model=model,
+            original_error=exc,
+        )
+    if status_code in (401, 403) or "permissiondenied" in haystack or "api key" in haystack or "unauth" in haystack:
+        return GeminiGenerationError(
+            "API key Gemini non valida o assente",
+            error_code="auth_failed",
+            http_status=401,
+            retryable=False,
+            fallback_allowed=False,
+            model=model,
+            original_error=exc,
+        )
+    if status_code == 404 or "notfound" in haystack or "not found" in haystack:
+        return GeminiGenerationError(
+            "Modello Gemini non disponibile o nome errato",
+            error_code="model_unavailable",
+            http_status=422,
+            retryable=False,
+            fallback_allowed=False,
+            model=model,
+            original_error=exc,
+        )
+    if status_code == 400 or "invalidargument" in haystack or "invalid argument" in haystack:
+        return GeminiGenerationError(
+            message or "Input Gemini non valido",
+            error_code="invalid_input",
+            http_status=422,
+            retryable=False,
+            fallback_allowed=False,
+            model=model,
+            original_error=exc,
+        )
+    if "deadlineexceeded" in haystack or "timeout" in haystack or "timed out" in haystack:
+        return GeminiGenerationError(
+            "Timeout chiamata Gemini",
+            error_code="timeout",
+            http_status=504,
+            retryable=True,
+            fallback_allowed=True,
+            model=model,
+            original_error=exc,
+        )
+    if status_code and 500 <= status_code < 600:
+        return GeminiGenerationError(
+            message or "Errore 5xx Gemini",
+            error_code="gemini_error",
+            http_status=502,
+            retryable=True,
+            fallback_allowed=True,
+            model=model,
+            original_error=exc,
+        )
+    return GeminiGenerationError(
+        message or "Errore Gemini non classificato",
+        error_code="gemini_error",
+        http_status=502,
+        retryable=True,
+        fallback_allowed=True,
+        model=model,
+        original_error=exc,
     )
 
-    for attempt in range(1, 4):
+
+def _log_gemini_failure(exc: Exception, *, attempt: int, model: str, prompt: str, duration_ms: int):
+    status_code = _exception_status_code(exc)
+    logger.error(
+        "[GEMINI] failure attempt=%s model=%s prompt_chars=%s call_duration_ms=%s "
+        "exception_type=%s exception_message=%s gemini_status_code=%s gemini_response_preview=%s",
+        attempt,
+        model,
+        len(prompt),
+        duration_ms,
+        type(exc).__name__,
+        _sanitize_log_text(exc, 300),
+        status_code,
+        _exception_response_preview(exc),
+    )
+
+
+def validate_gemini_config(ping: bool = False) -> None:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY mancante o vuota")
+    if not GEMINI_MODEL:
+        raise RuntimeError("GEMINI_MODEL mancante o vuota")
+    if GEMINI_TIMEOUT <= 0:
+        raise RuntimeError("GEMINI_TIMEOUT deve essere maggiore di zero")
+    genai.configure(api_key=GEMINI_API_KEY)
+    logger.info(
+        "[GEMINI] config ok model=%s timeout=%ss",
+        GEMINI_MODEL,
+        GEMINI_TIMEOUT,
+    )
+    if ping:
+        start = time.perf_counter()
+        response = genai.GenerativeModel(GEMINI_MODEL).generate_content(
+            "Rispondi solo OK",
+            request_options={"timeout": GEMINI_TIMEOUT},
+        )
+        logger.info("[GEMINI] ping ok call_duration_ms=%s", int((time.perf_counter() - start) * 1000))
+
+
+def _parse_metadata_response(response, *, model_name: str) -> dict:
+    finish_reason = ""
+    try:
+        finish_reason = str(response.candidates[0].finish_reason)
+    except Exception:
+        pass
+    if "SAFETY" in finish_reason.upper():
+        raise GeminiGenerationError(
+            "Gemini ha bloccato la risposta per safety",
+            error_code="safety_block",
+            http_status=422,
+            retryable=False,
+            fallback_allowed=False,
+            model=model_name,
+        )
+
+    raw = (response.text or "").strip()
+    logger.info("[GEMINI] Risposta raw preview: %s", _sanitize_log_text(raw, 200))
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    try:
+        metadata = _normalize_metadata_keys(json.loads(raw))
+    except Exception as exc:
+        raise GeminiGenerationError(
+            "Risposta Gemini non parsabile come JSON",
+            error_code="parse_error",
+            http_status=502,
+            retryable=True,
+            fallback_allowed=True,
+            model=model_name,
+            original_error=exc,
+        ) from exc
+
+    logger.info("[GEMINI] Metadati generati: %s", metadata)
+    if not _has_required_metadata(metadata):
+        missing = []
+        if not metadata.get("yt_title", "").strip():
+            missing.append("yt_title")
+        if not metadata.get("thumbnail_text", "").strip():
+            missing.append("thumbnail_text")
+        raise IncompleteGeminiMetadataError(
+            f"Gemini ha restituito metadati incompleti: {', '.join(missing)}"
+        )
+    return metadata
+
+
+def _generate_metadata_with_model(video_path: str, prompt: str, *, model_name: str) -> dict:
+    last_error = None
+    attempts = max(1, GEMINI_MAX_ATTEMPTS)
+
+    for attempt in range(1, attempts + 1):
         video_file = None
-        logger.info(f"[GEMINI] Tentativo {attempt}/3...")
+        started = time.perf_counter()
+        logger.info(
+            "[GEMINI] Tentativo %s/%s model=%s prompt_chars=%s",
+            attempt,
+            attempts,
+            model_name,
+            len(prompt),
+        )
 
         try:
-            # 1. Upload file su Gemini File API (fresco a ogni tentativo)
-            logger.info(f"[GEMINI] Upload video: {video_path}")
+            logger.info("[GEMINI] Upload video: %s", video_path)
             video_file = genai.upload_file(path=video_path, mime_type="video/mp4")
 
-            # 2. Attendi che il file sia processato
             logger.info("[GEMINI] Attendo elaborazione file...")
             for _ in range(30):
                 video_file = genai.get_file(video_file.name)
@@ -109,60 +342,71 @@ def generate_metadata(video_path: str, filename: str = "") -> dict:
                     raise RuntimeError("Elaborazione file fallita")
                 time.sleep(3)
             else:
-                raise RuntimeError("Timeout elaborazione file")
+                raise TimeoutError("Timeout elaborazione file")
 
-            # 3. Genera metadati
             logger.info("[GEMINI] Generazione metadati...")
-            model = genai.GenerativeModel("gemini-2.5-flash-preview-05-20")
-            response = model.generate_content([video_file, prompt])
-            raw = response.text.strip()
-            logger.info(f"[GEMINI] Risposta raw: {raw[:200]}")
-
-            # Pulizia eventuale markdown
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip()
-
-            metadata = _normalize_metadata_keys(json.loads(raw))
-            logger.info(f"[GEMINI] Metadati generati: {metadata}")
-            if not _has_required_metadata(metadata):
-                missing = []
-                if not metadata.get("yt_title", "").strip():
-                    missing.append("yt_title")
-                if not metadata.get("thumbnail_text", "").strip():
-                    missing.append("thumbnail_text")
-                raise IncompleteGeminiMetadataError(
-                    f"Gemini ha restituito metadati incompleti: {', '.join(missing)}"
-                )
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                [video_file, prompt],
+                request_options={"timeout": GEMINI_TIMEOUT},
+            )
+            metadata = _parse_metadata_response(response, model_name=model_name)
+            logger.info(
+                "[GEMINI] success attempt=%s model=%s prompt_chars=%s call_duration_ms=%s",
+                attempt,
+                model_name,
+                len(prompt),
+                int((time.perf_counter() - started) * 1000),
+            )
             return metadata
 
-        except Exception as e:
-            last_error = e
-            logger.error(f"[GEMINI] Tentativo {attempt}/3 fallito: {e}")
-            if attempt < 3:
-                logger.info(f"[GEMINI] Nuovo tentativo tra {retry_delay}s")
-                time.sleep(retry_delay)
+        except Exception as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            classified = _classify_gemini_error(exc, model=model_name)
+            last_error = classified
+            _log_gemini_failure(exc, attempt=attempt, model=model_name, prompt=prompt, duration_ms=duration_ms)
+            if not classified.retryable or attempt >= attempts:
+                raise classified from exc
+            delay = min(1.5 * (2 ** (attempt - 1)) + random.uniform(0, 1), 30.0)
+            logger.warning(
+                "[GEMINI] retry attempt=%s/%s next_delay=%.1fs error=%s",
+                attempt,
+                attempts,
+                delay,
+                classified.error_code,
+            )
+            time.sleep(delay)
         finally:
-            # Elimina il file da Gemini per non accumulare storage
             if video_file and getattr(video_file, "name", None):
                 try:
                     genai.delete_file(video_file.name)
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    logger.warning("[GEMINI] Cleanup file fallito: %s", _sanitize_log_text(cleanup_error, 200))
 
-    if isinstance(last_error, IncompleteGeminiMetadataError):
-        raise IncompleteGeminiMetadataError(
-            "Gemini ha restituito metadati incompleti dopo 3 tentativi"
-        ) from last_error
-    raise RuntimeError("Gemini: generazione metadati fallita dopo 3 tentativi") from last_error
+    raise last_error or GeminiGenerationError("Gemini: generazione metadati fallita", model=model_name)
 
-def _empty() -> dict:
-    return {
-        "yt_title": "",
-        "yt_description": "",
-        "ig_caption": "",
-        "fb_description": "",
-        "thumbnail_text": ""
-    }
+
+def generate_metadata(video_path: str, filename: str = "") -> dict:
+    """
+    Carica il video su Gemini File API e genera i metadati.
+    Restituisce dict con yt_title, yt_description, ig_caption, fb_description.
+    In caso di errore ritenta automaticamente; se fallisce sempre, solleva RuntimeError.
+    """
+    if not GEMINI_API_KEY:
+        raise GeminiGenerationError(
+            "API key Gemini non valida o assente",
+            error_code="auth_failed",
+            http_status=401,
+            retryable=False,
+            fallback_allowed=False,
+        )
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    prompt_filename = sanitize_prompt_filename(filename or os.path.basename(video_path))
+    prompt = (
+        f"Nome file sanitizzato da usare solo come contesto, non come titolo automatico: {prompt_filename}\n\n"
+        + PROMPT
+        + TITLE_QUALITY_PROMPT
+    )
+
+    return _generate_metadata_with_model(video_path, prompt, model_name=GEMINI_MODEL)

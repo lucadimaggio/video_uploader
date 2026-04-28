@@ -26,7 +26,12 @@ from api_instagram import upload_reel
 from api_youtube import upload_video as yt_upload, set_thumbnail as yt_set_thumbnail
 from api_facebook import upload_video as fb_upload
 from api_r2 import upload_to_r2, delete_from_r2
-from api_gemini import IncompleteGeminiMetadataError, generate_metadata
+from api_gemini import (
+    GeminiGenerationError,
+    IncompleteGeminiMetadataError,
+    generate_metadata,
+    validate_gemini_config,
+)
 from api_thumbnail import generate_thumbnail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -35,6 +40,11 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Video Uploader")
 
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
+
+
+@app.on_event("startup")
+def startup_checks():
+    validate_gemini_config(ping=os.environ.get("GEMINI_STARTUP_PING", "false").lower() == "true")
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -105,6 +115,25 @@ def download_video(url: str, dest_path: str):
     logger.info(f"[DOWNLOAD] Completato: {os.path.getsize(dest_path)/1024/1024:.1f}MB")
 
 
+def send_telegram_alert(message: str):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        logger.warning("[TELEGRAM] Env TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID mancante, alert non inviato")
+        return
+
+    try:
+        response = req_lib.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": message},
+            timeout=5,
+        )
+        response.raise_for_status()
+        logger.info("[TELEGRAM] Alert inviato")
+    except Exception as e:
+        logger.warning(f"[TELEGRAM] Alert fallito: {e}")
+
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -162,13 +191,19 @@ async def generate(
     # Gemini metadati
     try:
         meta = generate_metadata(filepath, filename=source_filename)
+    except GeminiGenerationError as e:
+        raise HTTPException(status_code=e.http_status, detail=e.to_n8n_detail())
     except IncompleteGeminiMetadataError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail={"error": "parse_error", "detail": str(e)})
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini ha fallito la generazione metadati: {e}")
+        logger.exception("[GENERATE] Errore Gemini non classificato")
+        raise HTTPException(status_code=502, detail={"error": "gemini_error", "detail": str(e)})
     logger.info(f"[GENERATE] Metadati: {meta}")
     if not meta.get("yt_title", "").strip() or not meta.get("thumbnail_text", "").strip():
-        raise HTTPException(status_code=422, detail="Gemini ha restituito metadati incompleti (titolo o thumbnail_text vuoto)")
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "parse_error", "detail": "Gemini ha restituito metadati incompleti (titolo o thumbnail_text vuoto)"},
+        )
 
     # Thumbnail
     thumb_r2_url = ""
