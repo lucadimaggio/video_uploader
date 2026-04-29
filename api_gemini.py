@@ -13,9 +13,9 @@ import google.generativeai as genai
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-preview-05-20")
-GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "30"))
-GEMINI_MAX_ATTEMPTS = int(os.environ.get("GEMINI_MAX_ATTEMPTS", "3"))
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "120"))
+GEMINI_MAX_ATTEMPTS = int(os.environ.get("GEMINI_MAX_ATTEMPTS", "5"))
 
 
 class IncompleteGeminiMetadataError(RuntimeError):
@@ -161,7 +161,7 @@ def _classify_gemini_error(exc: Exception, *, model: str) -> GeminiGenerationErr
             http_status=429,
             retryable=True,
             fallback_allowed=True,
-            retry_after_seconds=30,
+            retry_after_seconds=60,
             model=model,
             original_error=exc,
         )
@@ -367,7 +367,15 @@ def _generate_metadata_with_model(video_path: str, prompt: str, *, model_name: s
             _log_gemini_failure(exc, attempt=attempt, model=model_name, prompt=prompt, duration_ms=duration_ms)
             if not classified.retryable or attempt >= attempts:
                 raise classified from exc
-            delay = min(1.5 * (2 ** (attempt - 1)) + random.uniform(0, 1), 30.0)
+            if classified.error_code == "rate_limit":
+                delay = 60.0
+                logger.warning(
+                    "[GEMINI] rate_limit rilevato model=%s. Se persiste, aggiorna GEMINI_MODEL su Railway "
+                    "con un modello stabile e disponibile per il tuo piano.",
+                    model_name,
+                )
+            else:
+                delay = min(1.5 * (2 ** (attempt - 1)) + random.uniform(0, 1), 30.0)
             logger.warning(
                 "[GEMINI] retry attempt=%s/%s next_delay=%.1fs error=%s",
                 attempt,
