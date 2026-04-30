@@ -91,6 +91,22 @@ class CompressForIGRequest(BaseModel):
     max_size_mb:  float = 95.0
 
 
+class StepMetadataRequest(BaseModel):
+    r2_video_url:  str
+    r2_video_key:  str
+    safe_filename: str
+    job_id:        str = ""
+
+
+class StepThumbnailRequest(BaseModel):
+    r2_video_url:  str
+    r2_video_key:  str
+    r2_thumb_key:  str = ""
+    safe_filename: str
+    job_id:        str = ""
+    thumbnail_text: str = ""
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def download_video(url: str, dest_path: str):
@@ -246,6 +262,169 @@ async def generate(
         "r2_thumb_key":  thumb_r2_key,
         **meta
     }
+
+
+@app.post("/step/upload", dependencies=[Depends(verify_api_key)])
+async def step_upload(
+    file: UploadFile = File(None),
+    filename: str = Form(None),
+    video_url: str = Form(None),
+    x_api_key: str = Header(None)
+):
+    """Passo 1/3: riceve o scarica il video, lo carica su R2. Restituisce job_id + URL R2."""
+    if INTERNAL_API_KEY and x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    job_id      = str(uuid.uuid4())[:8]
+    source_name = filename or (file.filename if file else "video.mp4")
+    safe_name   = sanitize_filename(source_name)
+
+    tmp_dir  = tempfile.mkdtemp()
+    filepath = os.path.join(tmp_dir, safe_name)
+
+    try:
+        if file:
+            logger.info(f"[STEP/UPLOAD] Ricezione file binario: {safe_name}")
+            try:
+                content = await file.read()
+                with open(filepath, "wb") as f:
+                    f.write(content)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Ricezione file fallita: {e}")
+        elif video_url:
+            logger.info(f"[STEP/UPLOAD] Download da URL: {video_url}")
+            try:
+                download_video(video_url, filepath)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Download fallito: {e}")
+        else:
+            raise HTTPException(status_code=400, detail="Richiesto 'file' o 'video_url'")
+
+        size_mb = os.path.getsize(filepath) / 1024 / 1024
+        logger.info(f"[STEP/UPLOAD] File salvato: {filepath} ({size_mb:.1f}MB)")
+
+        try:
+            r2_key = f"videos/{job_id}/{safe_name}"
+            r2_url = upload_to_r2(filepath, r2_key)
+            logger.info(f"[STEP/UPLOAD] Video R2: {r2_url}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Upload R2 fallito: {e}")
+
+        return {
+            "job_id":        job_id,
+            "safe_filename": safe_name,
+            "r2_video_url":  r2_url,
+            "r2_video_key":  r2_key,
+            "size_mb":       round(size_mb, 1),
+        }
+    finally:
+        try:
+            os.remove(filepath)
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
+
+
+@app.post("/step/metadata", dependencies=[Depends(verify_api_key)])
+def step_metadata(body: StepMetadataRequest):
+    """Passo 2/3: scarica video da R2, chiama Gemini, restituisce metadati testuali."""
+    job_id = body.job_id or str(uuid.uuid4())[:8]
+
+    tmp_dir  = tempfile.mkdtemp()
+    filepath = os.path.join(tmp_dir, body.safe_filename)
+
+    try:
+        logger.info(f"[STEP/METADATA] Download da R2: {body.r2_video_url}")
+        try:
+            download_video(body.r2_video_url, filepath)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Download R2 fallito: {e}")
+
+        try:
+            meta = generate_metadata(filepath, filename=body.safe_filename)
+        except GeminiGenerationError as e:
+            raise HTTPException(status_code=e.http_status, detail=e.to_n8n_detail())
+        except IncompleteGeminiMetadataError as e:
+            raise HTTPException(status_code=422, detail={"error": "parse_error", "detail": str(e)})
+        except Exception as e:
+            logger.exception("[STEP/METADATA] Errore Gemini non classificato")
+            raise HTTPException(status_code=502, detail={"error": "gemini_error", "detail": str(e)})
+
+        logger.info(f"[STEP/METADATA] Metadati ricevuti: {meta}")
+
+        if not meta.get("yt_title", "").strip() or not meta.get("thumbnail_text", "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "parse_error", "detail": "Gemini ha restituito metadati incompleti (titolo o thumbnail_text vuoto)"},
+            )
+
+        return {
+            "job_id":        job_id,
+            "safe_filename": body.safe_filename,
+            "r2_video_url":  body.r2_video_url,
+            "r2_video_key":  body.r2_video_key,
+            **meta
+        }
+    finally:
+        try:
+            os.remove(filepath)
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
+
+
+@app.post("/step/thumbnail", dependencies=[Depends(verify_api_key)])
+def step_thumbnail(body: StepThumbnailRequest):
+    """Passo 3/3: scarica video da R2, genera thumbnail con ffmpeg+Pillow, carica su R2."""
+    job_id = body.job_id or str(uuid.uuid4())[:8]
+
+    tmp_dir  = tempfile.mkdtemp()
+    filepath = os.path.join(tmp_dir, body.safe_filename)
+
+    try:
+        logger.info(f"[STEP/THUMBNAIL] Download da R2: {body.r2_video_url}")
+        try:
+            download_video(body.r2_video_url, filepath)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Download R2 fallito: {e}")
+
+        thumb_text = (
+            body.thumbnail_text
+            or body.safe_filename.replace("_", " ").replace(".mp4", "")
+        )
+
+        thumb_path = generate_thumbnail(filepath, thumb_text)
+
+        if not thumb_path:
+            raise HTTPException(status_code=500, detail="Generazione thumbnail fallita: nessun file prodotto")
+
+        try:
+            thumb_r2_key = body.r2_thumb_key or f"thumbnails/{job_id}/thumb.jpg"
+            thumb_r2_url = upload_to_r2(thumb_path, thumb_r2_key)
+            logger.info(f"[STEP/THUMBNAIL] Thumbnail R2: {thumb_r2_url}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Upload thumbnail R2 fallito: {e}")
+        finally:
+            try:
+                os.remove(thumb_path)
+            except Exception:
+                pass
+
+        return {
+            "job_id":        job_id,
+            "safe_filename": body.safe_filename,
+            "r2_video_url":  body.r2_video_url,
+            "r2_video_key":  body.r2_video_key,
+            "r2_thumb_url":  thumb_r2_url,
+            "r2_thumb_key":  thumb_r2_key,
+            "thumbnail_text": thumb_text,
+        }
+    finally:
+        try:
+            os.remove(filepath)
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
 
 
 @app.post("/publish/youtube", dependencies=[Depends(verify_api_key)])
