@@ -16,6 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "120"))
 GEMINI_MAX_ATTEMPTS = int(os.environ.get("GEMINI_MAX_ATTEMPTS", "5"))
+GEMINI_RATE_LIMIT_DELAY = int(os.environ.get("GEMINI_RATE_LIMIT_DELAY", "10"))
 
 
 class IncompleteGeminiMetadataError(RuntimeError):
@@ -318,80 +319,96 @@ def _generate_metadata_with_model(video_path: str, prompt: str, *, model_name: s
     last_error = None
     attempts = max(1, GEMINI_MAX_ATTEMPTS)
 
-    for attempt in range(1, attempts + 1):
-        video_file = None
-        started = time.perf_counter()
-        logger.info(
-            "[GEMINI] Tentativo %s/%s model=%s prompt_chars=%s",
-            attempt,
-            attempts,
-            model_name,
-            len(prompt),
-        )
+    # Upload video UNA SOLA VOLTA prima del loop di retry
+    video_file = None
+    logger.info("[GEMINI] Upload video: %s", video_path)
+    try:
+        video_file = genai.upload_file(path=video_path, mime_type="video/mp4")
+    except Exception as exc:
+        raise _classify_gemini_error(exc, model=model_name) from exc
 
-        try:
-            logger.info("[GEMINI] Upload video: %s", video_path)
-            video_file = genai.upload_file(path=video_path, mime_type="video/mp4")
+    # Attendi che il file sia ACTIVE (una sola volta)
+    logger.info("[GEMINI] Attendo elaborazione file...")
+    try:
+        for _ in range(30):
+            video_file = genai.get_file(video_file.name)
+            if video_file.state.name == "ACTIVE":
+                break
+            if video_file.state.name == "FAILED":
+                raise RuntimeError("Elaborazione file fallita")
+            time.sleep(3)
+        else:
+            raise TimeoutError("Timeout elaborazione file")
+    except Exception as exc:
+        if video_file and getattr(video_file, "name", None):
+            try:
+                genai.delete_file(video_file.name)
+            except Exception:
+                pass
+        raise _classify_gemini_error(exc, model=model_name) from exc
 
-            logger.info("[GEMINI] Attendo elaborazione file...")
-            for _ in range(30):
-                video_file = genai.get_file(video_file.name)
-                if video_file.state.name == "ACTIVE":
-                    break
-                if video_file.state.name == "FAILED":
-                    raise RuntimeError("Elaborazione file fallita")
-                time.sleep(3)
-            else:
-                raise TimeoutError("Timeout elaborazione file")
-
-            logger.info("[GEMINI] Generazione metadati...")
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                [video_file, prompt],
-                request_options={"timeout": GEMINI_TIMEOUT},
-            )
-            metadata = _parse_metadata_response(response, model_name=model_name)
+    # Loop retry: riprova SOLO generate_content, non il re-upload
+    try:
+        for attempt in range(1, attempts + 1):
+            started = time.perf_counter()
             logger.info(
-                "[GEMINI] success attempt=%s model=%s prompt_chars=%s call_duration_ms=%s",
-                attempt,
-                model_name,
-                len(prompt),
-                int((time.perf_counter() - started) * 1000),
-            )
-            return metadata
-
-        except Exception as exc:
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            classified = _classify_gemini_error(exc, model=model_name)
-            last_error = classified
-            _log_gemini_failure(exc, attempt=attempt, model=model_name, prompt=prompt, duration_ms=duration_ms)
-            if not classified.retryable or attempt >= attempts:
-                raise classified from exc
-            if classified.error_code == "rate_limit":
-                delay = 60.0
-                logger.warning(
-                    "[GEMINI] rate_limit rilevato model=%s. Se persiste, aggiorna GEMINI_MODEL su Railway "
-                    "con un modello stabile e disponibile per il tuo piano.",
-                    model_name,
-                )
-            else:
-                delay = min(1.5 * (2 ** (attempt - 1)) + random.uniform(0, 1), 30.0)
-            logger.warning(
-                "[GEMINI] retry attempt=%s/%s next_delay=%.1fs error=%s",
+                "[GEMINI] Tentativo %s/%s model=%s prompt_chars=%s",
                 attempt,
                 attempts,
-                delay,
-                classified.error_code,
+                model_name,
+                len(prompt),
             )
-            time.sleep(delay)
-        finally:
-            if video_file and getattr(video_file, "name", None):
-                try:
-                    genai.delete_file(video_file.name)
-                except Exception as cleanup_error:
-                    logger.warning("[GEMINI] Cleanup file fallito: %s", _sanitize_log_text(cleanup_error, 200))
+            try:
+                logger.info("[GEMINI] Generazione metadati...")
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    [video_file, prompt],
+                    request_options={"timeout": GEMINI_TIMEOUT},
+                )
+                metadata = _parse_metadata_response(response, model_name=model_name)
+                logger.info(
+                    "[GEMINI] success attempt=%s model=%s prompt_chars=%s call_duration_ms=%s",
+                    attempt,
+                    model_name,
+                    len(prompt),
+                    int((time.perf_counter() - started) * 1000),
+                )
+                return metadata
 
-    raise last_error or GeminiGenerationError("Gemini: generazione metadati fallita", model=model_name)
+            except Exception as exc:
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                classified = _classify_gemini_error(exc, model=model_name)
+                last_error = classified
+                _log_gemini_failure(exc, attempt=attempt, model=model_name, prompt=prompt, duration_ms=duration_ms)
+                if not classified.retryable or attempt >= attempts:
+                    raise classified from exc
+                if classified.error_code == "rate_limit":
+                    delay = float(GEMINI_RATE_LIMIT_DELAY)
+                    logger.warning(
+                        "[GEMINI] rate_limit rilevato model=%s. Se persiste, aggiorna GEMINI_MODEL su Railway "
+                        "con un modello stabile e disponibile per il tuo piano.",
+                        model_name,
+                    )
+                else:
+                    delay = min(1.5 * (2 ** (attempt - 1)) + random.uniform(0, 1), 30.0)
+                logger.warning(
+                    "[GEMINI] retry attempt=%s/%s next_delay=%.1fs error=%s",
+                    attempt,
+                    attempts,
+                    delay,
+                    classified.error_code,
+                )
+                time.sleep(delay)
+
+        raise last_error or GeminiGenerationError("Gemini: generazione metadati fallita", model=model_name)
+
+    finally:
+        # Cleanup file Gemini: eseguito UNA VOLTA sola dopo tutti i tentativi
+        if video_file and getattr(video_file, "name", None):
+            try:
+                genai.delete_file(video_file.name)
+            except Exception as cleanup_error:
+                logger.warning("[GEMINI] Cleanup file fallito: %s", _sanitize_log_text(cleanup_error, 200))
 
 
 def generate_metadata(video_path: str, filename: str = "") -> dict:
