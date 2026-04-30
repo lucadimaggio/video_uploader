@@ -14,12 +14,12 @@ logger    = logging.getLogger(__name__)
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "Inter-Black.ttf")
 BOX_LEFT_RATIO = 0.08
 BOX_RIGHT_RATIO = 0.92
-BOX_TOP_RATIO = 0.58
-BOX_BOTTOM_RATIO = 0.90
-START_FONT_SIZE = 142
-MIN_FONT_SIZE = 56
+BOX_TOP_RATIO = 0.62
+BOX_BOTTOM_RATIO = 0.94
+START_FONT_SIZE = 132
+MIN_FONT_SIZE = 42
 FONT_STEP = 6
-MAX_LINES = 4
+MAX_LINES = 5
 MAX_WORDS_PER_LINE = 5
 STOPWORDS = {
     "A", "AD", "AL", "ALLA", "ALLE", "ALL'", "AI", "AGLI", "DA", "DAL", "DEI",
@@ -79,7 +79,7 @@ def _render(frame_path: str, text: str, output_path: str):
     # Overlay scuro graduale dal 38% inferiore
     overlay  = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ov_draw  = ImageDraw.Draw(overlay)
-    grad_top = int(H * 0.38)
+    grad_top = int(H * 0.42)
     for y in range(grad_top, H):
         alpha = int(220 * (y - grad_top) / (H - grad_top))
         ov_draw.rectangle([(0, y), (W, y)], fill=(0, 0, 0, alpha))
@@ -158,12 +158,6 @@ def _build_candidates(text: str) -> list[str]:
     compact = " ".join(compact_words)
     if compact and compact not in candidates:
         candidates.append(compact)
-
-    no_stopwords = [word for word in compact_words if word not in STOPWORDS]
-    if no_stopwords:
-        reduced = " ".join(no_stopwords)
-        if reduced and reduced not in candidates:
-            candidates.append(reduced)
 
     if len(words) > 7:
         candidates.append(" ".join(compact_words[:7]))
