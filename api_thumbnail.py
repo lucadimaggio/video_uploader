@@ -7,19 +7,20 @@ import re
 import subprocess
 import tempfile
 import logging
+import unicodedata
 from PIL import Image, ImageDraw, ImageFont
 
 logger    = logging.getLogger(__name__)
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "Inter-Black.ttf")
 BOX_LEFT_RATIO = 0.08
 BOX_RIGHT_RATIO = 0.92
-BOX_TOP_RATIO = 0.46
-BOX_BOTTOM_RATIO = 0.80
-START_FONT_SIZE = 148
-MIN_FONT_SIZE = 84
+BOX_TOP_RATIO = 0.58
+BOX_BOTTOM_RATIO = 0.90
+START_FONT_SIZE = 142
+MIN_FONT_SIZE = 56
 FONT_STEP = 6
-MAX_LINES = 2
-MAX_WORDS_PER_LINE = 3
+MAX_LINES = 4
+MAX_WORDS_PER_LINE = 5
 STOPWORDS = {
     "A", "AD", "AL", "ALLA", "ALLE", "ALL'", "AI", "AGLI", "DA", "DAL", "DEI",
     "DEL", "DELLA", "DELLE", "DI", "E", "GLI", "IL", "IN", "LA", "LE", "LO",
@@ -152,10 +153,6 @@ def _build_candidates(text: str) -> list[str]:
 
     words = base.split()
     candidates: list[str] = [base]
-    if len(words) > 5:
-        candidates.append(" ".join(words[:5]))
-    if len(words) > 4:
-        candidates.append(" ".join(words[:4]))
 
     compact_words = [SHORT_WORD_REPLACEMENTS.get(word, word) for word in words]
     compact = " ".join(compact_words)
@@ -164,23 +161,24 @@ def _build_candidates(text: str) -> list[str]:
 
     no_stopwords = [word for word in compact_words if word not in STOPWORDS]
     if no_stopwords:
-        reduced = " ".join(no_stopwords[:4])
+        reduced = " ".join(no_stopwords)
         if reduced and reduced not in candidates:
             candidates.append(reduced)
-        reduced_short = " ".join(no_stopwords[:3])
-        if reduced_short and reduced_short not in candidates:
-            candidates.append(reduced_short)
 
-    first_three = " ".join(compact_words[:3])
-    if first_three and first_three not in candidates:
-        candidates.append(first_three)
+    if len(words) > 7:
+        candidates.append(" ".join(compact_words[:7]))
+    if len(words) > 6:
+        candidates.append(" ".join(compact_words[:6]))
+    if len(words) > 5:
+        candidates.append(" ".join(compact_words[:5]))
 
     return candidates
 
 
 def _normalize_text(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", text.strip().upper())
-    cleaned = re.sub(r"[^A-Z0-9À-ÖØ-Ý?' ]+", "", cleaned)
+    cleaned = unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"[^A-Z0-9À-ÖØ-Ý?' :]+", "", cleaned)
     return cleaned.strip()
 
 
