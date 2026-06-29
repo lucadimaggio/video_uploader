@@ -172,7 +172,7 @@ def _build_candidates(text: str) -> list[str]:
 def _normalize_text(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", text.strip().upper())
     cleaned = unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii")
-    cleaned = re.sub(r"[^A-Z0-9À-ÖØ-Ý?' :]+", "", cleaned)
+    cleaned = re.sub(r"[^A-Z0-9À-ÖØ-Ý?',!. :]+", "", cleaned)
     return cleaned.strip()
 
 
